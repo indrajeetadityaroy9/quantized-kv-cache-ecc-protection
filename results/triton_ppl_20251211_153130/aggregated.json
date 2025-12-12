@@ -1,0 +1,78 @@
+{
+  "hamming84": {
+    "0.0": {
+      "ppl_mean": 16.699861803167725,
+      "ppl_std": 0.0,
+      "ppl_min": 16.699861803167725,
+      "ppl_max": 16.699861803167725,
+      "num_trials": 3,
+      "num_valid": 3,
+      "total_injection_count": 0
+    },
+    "0.0001": {
+      "ppl_mean": 16.681420673095957,
+      "ppl_std": 0.009324484774479785,
+      "ppl_min": 16.67118833646726,
+      "ppl_max": 16.689438648028133,
+      "num_trials": 3,
+      "num_valid": 3,
+      "total_injection_count": 5037312
+    },
+    "0.001": {
+      "ppl_mean": 16.88849798152878,
+      "ppl_std": 0.09147325615353841,
+      "ppl_min": 16.812424565513187,
+      "ppl_max": 16.98999320451384,
+      "num_trials": 3,
+      "num_valid": 3,
+      "total_injection_count": 5037312
+    },
+    "0.01": {
+      "ppl_mean": 132.28888502627063,
+      "ppl_std": 9.28065789017235,
+      "ppl_min": 122.15967183430972,
+      "ppl_max": 140.38332510913978,
+      "num_trials": 3,
+      "num_valid": 3,
+      "total_injection_count": 5037312
+    }
+  },
+  "adaptive": {
+    "0.0": {
+      "ppl_mean": 16.699861803167725,
+      "ppl_std": 0.0,
+      "ppl_min": 16.699861803167725,
+      "ppl_max": 16.699861803167725,
+      "num_trials": 3,
+      "num_valid": 3,
+      "total_injection_count": 0
+    },
+    "0.0001": {
+      "ppl_mean": 16.685871740073093,
+      "ppl_std": 0.017530117383391355,
+      "ppl_min": 16.66861284590216,
+      "ppl_max": 16.70366104220506,
+      "num_trials": 3,
+      "num_valid": 3,
+      "total_injection_count": 5037312
+    },
+    "0.001": {
+      "ppl_mean": 16.83816282159743,
+      "ppl_std": 0.04515130996880139,
+      "ppl_min": 16.80538581806782,
+      "ppl_max": 16.889663882676725,
+      "num_trials": 3,
+      "num_valid": 3,
+      "total_injection_count": 5037312
+    },
+    "0.01": {
+      "ppl_mean": 43.98710664472867,
+      "ppl_std": 0.33756676568221633,
+      "ppl_min": 43.74786654174701,
+      "ppl_max": 44.37323082590072,
+      "num_trials": 3,
+      "num_valid": 3,
+      "total_injection_count": 5037312
+    }
+  }
+}

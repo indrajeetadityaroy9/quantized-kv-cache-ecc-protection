@@ -1,0 +1,218 @@
+[
+  {
+    "mode": "hamming84",
+    "ber": 0.0,
+    "seed": 42,
+    "ppl": 16.699861803167725,
+    "num_samples": 50,
+    "total_tokens": 6559,
+    "injection_count": 0
+  },
+  {
+    "mode": "hamming84",
+    "ber": 0.0,
+    "seed": 101,
+    "ppl": 16.699861803167725,
+    "num_samples": 50,
+    "total_tokens": 6559,
+    "injection_count": 0
+  },
+  {
+    "mode": "hamming84",
+    "ber": 0.0,
+    "seed": 997,
+    "ppl": 16.699861803167725,
+    "num_samples": 50,
+    "total_tokens": 6559,
+    "injection_count": 0
+  },
+  {
+    "mode": "hamming84",
+    "ber": 0.0001,
+    "seed": 42,
+    "ppl": 16.68363503479248,
+    "num_samples": 50,
+    "total_tokens": 6559,
+    "injection_count": 1679104
+  },
+  {
+    "mode": "hamming84",
+    "ber": 0.0001,
+    "seed": 101,
+    "ppl": 16.67118833646726,
+    "num_samples": 50,
+    "total_tokens": 6559,
+    "injection_count": 1679104
+  },
+  {
+    "mode": "hamming84",
+    "ber": 0.0001,
+    "seed": 997,
+    "ppl": 16.689438648028133,
+    "num_samples": 50,
+    "total_tokens": 6559,
+    "injection_count": 1679104
+  },
+  {
+    "mode": "hamming84",
+    "ber": 0.001,
+    "seed": 42,
+    "ppl": 16.86307617455931,
+    "num_samples": 50,
+    "total_tokens": 6559,
+    "injection_count": 1679104
+  },
+  {
+    "mode": "hamming84",
+    "ber": 0.001,
+    "seed": 101,
+    "ppl": 16.98999320451384,
+    "num_samples": 50,
+    "total_tokens": 6559,
+    "injection_count": 1679104
+  },
+  {
+    "mode": "hamming84",
+    "ber": 0.001,
+    "seed": 997,
+    "ppl": 16.812424565513187,
+    "num_samples": 50,
+    "total_tokens": 6559,
+    "injection_count": 1679104
+  },
+  {
+    "mode": "hamming84",
+    "ber": 0.01,
+    "seed": 42,
+    "ppl": 122.15967183430972,
+    "num_samples": 50,
+    "total_tokens": 6559,
+    "injection_count": 1679104
+  },
+  {
+    "mode": "hamming84",
+    "ber": 0.01,
+    "seed": 101,
+    "ppl": 140.38332510913978,
+    "num_samples": 50,
+    "total_tokens": 6559,
+    "injection_count": 1679104
+  },
+  {
+    "mode": "hamming84",
+    "ber": 0.01,
+    "seed": 997,
+    "ppl": 134.3236581353624,
+    "num_samples": 50,
+    "total_tokens": 6559,
+    "injection_count": 1679104
+  },
+  {
+    "mode": "adaptive",
+    "ber": 0.0,
+    "seed": 42,
+    "ppl": 16.699861803167725,
+    "num_samples": 50,
+    "total_tokens": 6559,
+    "injection_count": 0
+  },
+  {
+    "mode": "adaptive",
+    "ber": 0.0,
+    "seed": 101,
+    "ppl": 16.699861803167725,
+    "num_samples": 50,
+    "total_tokens": 6559,
+    "injection_count": 0
+  },
+  {
+    "mode": "adaptive",
+    "ber": 0.0,
+    "seed": 997,
+    "ppl": 16.699861803167725,
+    "num_samples": 50,
+    "total_tokens": 6559,
+    "injection_count": 0
+  },
+  {
+    "mode": "adaptive",
+    "ber": 0.0001,
+    "seed": 42,
+    "ppl": 16.685341332112063,
+    "num_samples": 50,
+    "total_tokens": 6559,
+    "injection_count": 1679104
+  },
+  {
+    "mode": "adaptive",
+    "ber": 0.0001,
+    "seed": 101,
+    "ppl": 16.66861284590216,
+    "num_samples": 50,
+    "total_tokens": 6559,
+    "injection_count": 1679104
+  },
+  {
+    "mode": "adaptive",
+    "ber": 0.0001,
+    "seed": 997,
+    "ppl": 16.70366104220506,
+    "num_samples": 50,
+    "total_tokens": 6559,
+    "injection_count": 1679104
+  },
+  {
+    "mode": "adaptive",
+    "ber": 0.001,
+    "seed": 42,
+    "ppl": 16.80538581806782,
+    "num_samples": 50,
+    "total_tokens": 6559,
+    "injection_count": 1679104
+  },
+  {
+    "mode": "adaptive",
+    "ber": 0.001,
+    "seed": 101,
+    "ppl": 16.889663882676725,
+    "num_samples": 50,
+    "total_tokens": 6559,
+    "injection_count": 1679104
+  },
+  {
+    "mode": "adaptive",
+    "ber": 0.001,
+    "seed": 997,
+    "ppl": 16.81943876404774,
+    "num_samples": 50,
+    "total_tokens": 6559,
+    "injection_count": 1679104
+  },
+  {
+    "mode": "adaptive",
+    "ber": 0.01,
+    "seed": 42,
+    "ppl": 44.37323082590072,
+    "num_samples": 50,
+    "total_tokens": 6559,
+    "injection_count": 1679104
+  },
+  {
+    "mode": "adaptive",
+    "ber": 0.01,
+    "seed": 101,
+    "ppl": 43.84022256653827,
+    "num_samples": 50,
+    "total_tokens": 6559,
+    "injection_count": 1679104
+  },
+  {
+    "mode": "adaptive",
+    "ber": 0.01,
+    "seed": 997,
+    "ppl": 43.74786654174701,
+    "num_samples": 50,
+    "total_tokens": 6559,
+    "injection_count": 1679104
+  }
+]

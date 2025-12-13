@@ -1,56 +1,20 @@
-#!/usr/bin/env python3
-"""
-Pull benchmark results from Modal volume using the Modal SDK.
-
-This script provides a convenient way to retrieve benchmark results
-without running the full modal_runner.py.
-
-Usage:
-    # List all available results
-    python pull_results.py --list
-
-    # Pull specific results
-    python pull_results.py --name llama_benchmark_20251209_134313
-
-    # Pull latest results
-    python pull_results.py --latest
-
-    # Pull to custom directory
-    python pull_results.py --latest --output ./my_results
-
-    # Print metrics to stdout only (don't save files)
-    python pull_results.py --latest --print-only
-"""
-
 import argparse
 import json
 import sys
 from pathlib import Path
 from datetime import datetime
+import modal
 
-try:
-    import modal
-except ImportError:
-    print("Error: Modal SDK not installed. Install with: pip install modal")
-    sys.exit(1)
-
-
-# Connect to the Modal app and volume
 def get_volume():
-    """Get the hamming74-results volume."""
     return modal.Volume.from_name("hamming74-results")
 
-
-def list_results_from_volume() -> list:
-    """List all benchmark results in the Modal volume."""
+def list_results_from_volume():
     vol = get_volume()
-
     results = []
     try:
         for entry in vol.listdir("/"):
             if entry.path != "/":
                 name = entry.path.strip("/")
-                # Check what files exist
                 files = []
                 try:
                     for f in vol.listdir(entry.path):
@@ -58,50 +22,26 @@ def list_results_from_volume() -> list:
                             files.append(Path(f.path).name)
                 except Exception:
                     pass
-
                 if files:
-                    results.append({
-                        "name": name,
-                        "files": files,
-                    })
+                    results.append({"name": name, "files": files})
     except Exception as e:
         print(f"Error listing volume: {e}")
         return []
-
-    # Sort by name (which includes timestamp) descending
     results.sort(key=lambda x: x["name"], reverse=True)
     return results
 
 
-def read_file_from_volume(path: str) -> str:
-    """Read a file from the Modal volume."""
+def read_file_from_volume(path):
     vol = get_volume()
-
-    # Read file content
     content = b""
     for chunk in vol.read_file(path):
         content += chunk
-
     return content.decode("utf-8")
 
 
-def pull_results(run_name: str, output_dir: Path, print_only: bool = False) -> dict:
-    """
-    Pull benchmark results from the Modal volume.
-
-    Args:
-        run_name: Name of the benchmark run
-        output_dir: Local directory to save files
-        print_only: If True, only print metrics without saving
-
-    Returns:
-        Dictionary with pulled data
-    """
+def pull_results(run_name, output_dir, print_only=False):
     vol = get_volume()
-
     result = {"name": run_name, "files": {}}
-
-    # List files in the run directory
     run_path = f"/{run_name}"
     files_to_read = ["results.json", "summary.txt", "metrics.txt"]
 
@@ -114,14 +54,12 @@ def pull_results(run_name: str, output_dir: Path, print_only: bool = False) -> d
             else:
                 result["files"][filename] = content
         except Exception:
-            # File doesn't exist, skip
             pass
 
     if not result["files"]:
         print(f"Error: No files found for run '{run_name}'")
         return result
 
-    # Save files locally if not print_only
     if not print_only:
         output_path = output_dir / run_name
         output_path.mkdir(parents=True, exist_ok=True)
@@ -137,7 +75,6 @@ def pull_results(run_name: str, output_dir: Path, print_only: bool = False) -> d
 
         print(f"Results saved to: {output_path}")
         print(f"Files: {', '.join(result['files'].keys())}")
-
     return result
 
 
@@ -149,12 +86,14 @@ def main():
     )
 
     parser.add_argument(
-        "--list", "-l",
+        "--list",
+        "-l",
         action="store_true",
         help="List all available benchmark results",
     )
     parser.add_argument(
-        "--name", "-n",
+        "--name",
+        "-n",
         type=str,
         help="Name of specific benchmark run to pull",
     )
@@ -164,13 +103,15 @@ def main():
         help="Pull the most recent benchmark results",
     )
     parser.add_argument(
-        "--output", "-o",
+        "--output",
+        "-o",
         type=str,
         default="./results",
         help="Output directory for results (default: ./results)",
     )
     parser.add_argument(
-        "--print-only", "-p",
+        "--print-only",
+        "-p",
         action="store_true",
         help="Print metrics to stdout without saving files",
     )
@@ -182,7 +123,6 @@ def main():
 
     args = parser.parse_args()
 
-    # List results
     if args.list:
         results = list_results_from_volume()
 
@@ -191,8 +131,6 @@ def main():
             return
 
         if not results:
-            print("No benchmark results found in Modal volume.")
-            print("Run a benchmark first: modal run modal_runner.py --benchmark --models llama")
             return
 
         print("\n" + "=" * 70)
@@ -210,7 +148,6 @@ def main():
         print("Latest:  python pull_results.py --latest")
         return
 
-    # Determine which run to pull
     run_name = args.name
     if args.latest:
         results = list_results_from_volume()
@@ -225,7 +162,6 @@ def main():
         print("\nError: Specify --name, --latest, or --list")
         return
 
-    # Pull results
     print(f"\nPulling results: {run_name}")
     result = pull_results(run_name, Path(args.output), args.print_only)
 
@@ -233,7 +169,6 @@ def main():
         print(json.dumps(result, indent=2))
         return
 
-    # Print metrics if available
     if "metrics.txt" in result.get("files", {}):
         print("\n" + result["files"]["metrics.txt"])
     elif "summary.txt" in result.get("files", {}):

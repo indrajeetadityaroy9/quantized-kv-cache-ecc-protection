@@ -1,35 +1,14 @@
-"""
-Triton-based ECC Evaluation Runner.
-
-Self-contained evaluation functions designed for parallel execution on Modal.
-Each function loads its own model and runs independently.
-
-Usage:
-    # Called by Modal .starmap() for parallel execution
-    result = run_single_triton_trial("meta-llama/Llama-3.1-8B", "hamming84", 1e-3, 42, 50)
-"""
-
 import math
 import os
 from typing import Dict, Any, List, Tuple, Optional
 
 
 def load_llama_model(model_name: str) -> Tuple[Any, Any]:
-    """
-    Load LLaMA model with FP16 and proper caching.
-
-    Args:
-        model_name: HuggingFace model name (e.g., "meta-llama/Llama-3.1-8B")
-
-    Returns:
-        Tuple of (model, tokenizer)
-    """
     import torch
     from transformers import AutoModelForCausalLM, AutoTokenizer
 
     hf_token = os.environ.get("HF_TOKEN")
 
-    # Set cache directory
     cache_dir = os.environ.get("HF_HOME", "/cache/huggingface")
 
     print(f"[load_llama_model] Loading tokenizer: {model_name}")
@@ -39,7 +18,6 @@ def load_llama_model(model_name: str) -> Tuple[Any, Any]:
         cache_dir=cache_dir,
     )
 
-    # Set pad token if not set
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
 
@@ -53,7 +31,9 @@ def load_llama_model(model_name: str) -> Tuple[Any, Any]:
     )
     model.eval()
 
-    print(f"[load_llama_model] Model loaded successfully. Device: {next(model.parameters()).device}")
+    print(
+        f"[load_llama_model] Model loaded successfully. Device: {next(model.parameters()).device}"
+    )
 
     return model, tokenizer
 
@@ -65,34 +45,6 @@ def run_single_triton_trial(
     seed: int,
     max_samples: int,
 ) -> Dict[str, Any]:
-    """
-    Self-contained function: load model, run ONE trial, return result.
-
-    Designed for parallel execution via Modal .starmap().
-
-    Args:
-        model_name: HuggingFace model name (e.g., "meta-llama/Llama-3.1-8B")
-        mode: Cache mode - one of:
-            - "fp16": No quantization (oracle baseline)
-            - "int4": INT4 quantization only, no ECC
-            - "int4-hamming": INT4 + Hamming(7,4) SEC
-            - "int4-hamming84": INT4 + Hamming(8,4) SECDED
-            - "int4-hamming84-interp": INT4 + SECDED + interpolation
-            - "int12-golay": INT4 triplets + Golay(24,12)
-            - "adaptive": Golay sinks + Hamming84 context
-        ber: Bit error rate for fault injection
-        seed: Random seed for reproducibility
-        max_samples: Maximum number of WikiText-2 documents to evaluate
-
-    Returns:
-        Dictionary with trial results:
-        - mode: Cache mode used
-        - ber: Bit error rate
-        - seed: Random seed
-        - ppl: Computed perplexity
-        - num_samples: Number of samples evaluated
-        - errors_injected: Total errors injected (if available)
-    """
     import torch
     from vllm_kernels.shim import (
         ECCShimConfig,
@@ -102,24 +54,48 @@ def run_single_triton_trial(
     )
     from evaluation.metrics import load_wikitext2_test
 
-    # Map cache_mode strings to shim config parameters
     MODE_CONFIG = {
         "fp16": {"codec": "fp16", "use_interpolation": False, "sink_blocks": 0},
         "int4": {"codec": "int4", "use_interpolation": False, "sink_blocks": 0},
-        "int4-hamming": {"codec": "hamming74", "use_interpolation": False, "sink_blocks": 0},
-        "int4-hamming84": {"codec": "hamming84", "use_interpolation": False, "sink_blocks": 0},
-        "int4-hamming84-interp": {"codec": "hamming84", "use_interpolation": True, "sink_blocks": 0},
+        "int4-hamming": {
+            "codec": "hamming74",
+            "use_interpolation": False,
+            "sink_blocks": 0,
+        },
+        "int4-hamming84": {
+            "codec": "hamming84",
+            "use_interpolation": False,
+            "sink_blocks": 0,
+        },
+        "int4-hamming84-interp": {
+            "codec": "hamming84",
+            "use_interpolation": True,
+            "sink_blocks": 0,
+        },
         "int12-golay": {"codec": "golay", "use_interpolation": False, "sink_blocks": 0},
         "adaptive": {"codec": "adaptive", "use_interpolation": False, "sink_blocks": 4},
-        "adaptive-uep": {"codec": "adaptive", "use_interpolation": False, "sink_blocks": 4},
-        # Also accept raw codec names for backward compatibility
-        "hamming74": {"codec": "hamming74", "use_interpolation": False, "sink_blocks": 0},
-        "hamming84": {"codec": "hamming84", "use_interpolation": False, "sink_blocks": 0},
+        "adaptive-uep": {
+            "codec": "adaptive",
+            "use_interpolation": False,
+            "sink_blocks": 4,
+        },
+        "hamming74": {
+            "codec": "hamming74",
+            "use_interpolation": False,
+            "sink_blocks": 0,
+        },
+        "hamming84": {
+            "codec": "hamming84",
+            "use_interpolation": False,
+            "sink_blocks": 0,
+        },
         "golay": {"codec": "golay", "use_interpolation": False, "sink_blocks": 0},
     }
 
     if mode not in MODE_CONFIG:
-        raise ValueError(f"Unknown mode: {mode}. Valid modes: {list(MODE_CONFIG.keys())}")
+        raise ValueError(
+            f"Unknown mode: {mode}. Valid modes: {list(MODE_CONFIG.keys())}"
+        )
 
     mode_cfg = MODE_CONFIG[mode]
     codec = mode_cfg["codec"]
@@ -128,32 +104,30 @@ def run_single_triton_trial(
 
     print("=" * 60)
     print(f"[Trial] mode={mode}, ber={ber:.0e}, seed={seed}")
-    print(f"        codec={codec}, use_interpolation={use_interpolation}, sink_blocks={sink_blocks}")
+    print(
+        f"        codec={codec}, use_interpolation={use_interpolation}, sink_blocks={sink_blocks}"
+    )
     if mode in ["adaptive", "adaptive-uep"]:
         print("        NOTE: adaptive mode uses Golay for sink blocks")
     print("=" * 60)
 
-    # 1. Load model (each worker loads independently)
     model, tokenizer = load_llama_model(model_name)
 
-    # 2. Load evaluation data
     print(f"[Trial] Loading WikiText-2 test data...")
     texts = load_wikitext2_test(max_samples=max_samples)
     print(f"[Trial] Loaded {len(texts)} documents")
 
-    # 3. Configure ECC shim based on mode
     config = ECCShimConfig(
         codec=codec,
         ber=ber,
         inject_errors=(ber > 0),
         seed=seed,
-        num_blocks=2048,  # Sufficient for long sequences
+        num_blocks=2048,
         block_size=16,
         sink_blocks=sink_blocks,
         use_interpolation=use_interpolation,
     )
 
-    # 4. Run evaluation loop
     all_losses = []
     total_tokens = 0
 
@@ -163,10 +137,8 @@ def run_single_triton_trial(
             if not text.strip():
                 continue
 
-            # CRITICAL: Reset cache between each document
             reset_ecc_cache(model)
 
-            # Tokenize
             inputs = tokenizer(
                 text,
                 return_tensors="pt",
@@ -179,44 +151,45 @@ def run_single_triton_trial(
             if seq_len < 2:
                 continue
 
-            # Move to model device
             inputs = {k: v.to(model.device) for k, v in inputs.items()}
 
-            # Forward pass with labels for loss computation
             with torch.no_grad():
                 outputs = model(**inputs, labels=inputs["input_ids"])
                 loss = outputs.loss
 
                 if not torch.isnan(loss) and not torch.isinf(loss):
-                    # Weight by number of tokens
                     all_losses.append(loss.item() * seq_len)
                     total_tokens += seq_len
 
-            # Progress logging every 10 samples
             if (i + 1) % 10 == 0:
-                current_ppl = math.exp(sum(all_losses) / total_tokens) if total_tokens > 0 else float('inf')
-                print(f"[Trial] Processed {i + 1}/{len(texts)} documents, running PPL: {current_ppl:.2f}")
+                current_ppl = (
+                    math.exp(sum(all_losses) / total_tokens)
+                    if total_tokens > 0
+                    else float("inf")
+                )
+                print(
+                    f"[Trial] Processed {i + 1}/{len(texts)} documents, running PPL: {current_ppl:.2f}"
+                )
 
-        # Get final ECC stats
         stats = get_ecc_stats(model)
 
-    # 5. Compute final perplexity
     if total_tokens == 0:
-        ppl = float('inf')
+        ppl = float("inf")
     else:
         avg_loss = sum(all_losses) / total_tokens
         ppl = math.exp(avg_loss)
 
-    # Extract error statistics
-    errors_corrected = stats.get('errors_corrected', 0)
-    errors_detected = stats.get('errors_detected', 0)
-    injection_count = stats.get('injection_count', 0)
+    errors_corrected = stats.get("errors_corrected", 0)
+    errors_detected = stats.get("errors_detected", 0)
+    injection_count = stats.get("injection_count", 0)
 
     print("=" * 60)
     print(f"[Trial COMPLETE] mode={mode}, ber={ber:.0e}, seed={seed}")
     print(f"                 PPL={ppl:.2f}, tokens={total_tokens}")
     print(f"                 injection_count={injection_count}")
-    print(f"                 errors_corrected={errors_corrected}, errors_detected={errors_detected}")
+    print(
+        f"                 errors_corrected={errors_corrected}, errors_detected={errors_detected}"
+    )
     print("=" * 60)
 
     return {
@@ -239,21 +212,6 @@ def run_triton_ppl_sweep(
     seeds: List[int],
     max_samples: int,
 ) -> List[Dict[str, Any]]:
-    """
-    Run a full PPL sweep locally (sequential).
-
-    For parallel execution on Modal, use .starmap() with run_single_triton_trial instead.
-
-    Args:
-        model_name: HuggingFace model name
-        modes: List of ECC modes to test
-        ber_levels: List of BER values
-        seeds: List of random seeds for Monte Carlo
-        max_samples: Max documents per trial
-
-    Returns:
-        List of result dictionaries from all trials
-    """
     results = []
 
     total_trials = len(modes) * len(ber_levels) * len(seeds)
@@ -263,7 +221,9 @@ def run_triton_ppl_sweep(
         for ber in ber_levels:
             for seed in seeds:
                 trial_num += 1
-                print(f"\n[Sweep {trial_num}/{total_trials}] mode={mode}, ber={ber:.0e}, seed={seed}")
+                print(
+                    f"\n[Sweep {trial_num}/{total_trials}] mode={mode}, ber={ber:.0e}, seed={seed}"
+                )
 
                 result = run_single_triton_trial(
                     model_name=model_name,
@@ -278,29 +238,16 @@ def run_triton_ppl_sweep(
 
 
 def format_ppl_table(results: List[Dict[str, Any]]) -> str:
-    """
-    Format PPL results as a Markdown table.
-
-    Args:
-        results: List of trial result dictionaries
-
-    Returns:
-        Markdown-formatted table string
-    """
-    # Organize results by mode and BER
     from collections import defaultdict
 
-    # Group by (mode, ber) and aggregate seeds
     grouped = defaultdict(list)
     for r in results:
         key = (r["mode"], r["ber"])
         grouped[key].append(r["ppl"])
 
-    # Get unique modes and BERs
     modes = sorted(set(r["mode"] for r in results))
     bers = sorted(set(r["ber"] for r in results))
 
-    # Build table
     lines = []
     lines.append("| Protection | " + " | ".join(f"BER={b:.0e}" for b in bers) + " |")
     lines.append("|" + "----|" * (len(bers) + 1))
@@ -311,7 +258,11 @@ def format_ppl_table(results: List[Dict[str, Any]]) -> str:
             ppls = grouped.get((mode, ber), [])
             if ppls:
                 mean_ppl = sum(ppls) / len(ppls)
-                std_ppl = (sum((p - mean_ppl) ** 2 for p in ppls) / len(ppls)) ** 0.5 if len(ppls) > 1 else 0
+                std_ppl = (
+                    (sum((p - mean_ppl) ** 2 for p in ppls) / len(ppls)) ** 0.5
+                    if len(ppls) > 1
+                    else 0
+                )
                 if mean_ppl > 1000:
                     row += f" >1000 |"
                 else:
@@ -324,19 +275,9 @@ def format_ppl_table(results: List[Dict[str, Any]]) -> str:
 
 
 def aggregate_results(results: List[Dict[str, Any]]) -> Dict[str, Any]:
-    """
-    Aggregate raw trial results into summary statistics.
-
-    Args:
-        results: List of trial result dictionaries
-
-    Returns:
-        Aggregated results organized by mode and BER
-    """
     from collections import defaultdict
     import statistics
 
-    # Group by (mode, ber)
     grouped = defaultdict(list)
     for r in results:
         key = (r["mode"], r["ber"])
@@ -344,16 +285,16 @@ def aggregate_results(results: List[Dict[str, Any]]) -> Dict[str, Any]:
 
     aggregated = {}
     for (mode, ber), trials in grouped.items():
-        ppls = [t["ppl"] for t in trials if t["ppl"] != float('inf')]
+        ppls = [t["ppl"] for t in trials if t["ppl"] != float("inf")]
 
         if mode not in aggregated:
             aggregated[mode] = {}
 
         aggregated[mode][str(ber)] = {
-            "ppl_mean": statistics.mean(ppls) if ppls else float('inf'),
+            "ppl_mean": statistics.mean(ppls) if ppls else float("inf"),
             "ppl_std": statistics.stdev(ppls) if len(ppls) > 1 else 0.0,
-            "ppl_min": min(ppls) if ppls else float('inf'),
-            "ppl_max": max(ppls) if ppls else float('inf'),
+            "ppl_min": min(ppls) if ppls else float("inf"),
+            "ppl_max": max(ppls) if ppls else float("inf"),
             "num_trials": len(trials),
             "num_valid": len(ppls),
             "total_injection_count": sum(t.get("injection_count", 0) for t in trials),

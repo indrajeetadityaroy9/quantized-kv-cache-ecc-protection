@@ -1,15 +1,3 @@
-"""
-Timing Infrastructure for ECC Codec Benchmarking.
-
-Provides utilities for measuring wall-clock latency and throughput of
-encode/decode operations. Designed for minimal overhead when disabled.
-
-NOTE: Phase 1 metrics are Baseline / CPU-Bound. Since Hamming codecs
-currently run on CPU, throughput numbers are bottlenecked by CPU-GPU
-transfers. Phase 3 (Triton GPU codecs) will provide production-grade
-metrics. Do not conflate CPU-bound and GPU-native numbers in analysis.
-"""
-
 import time
 from dataclasses import dataclass, field
 from typing import Optional, Dict, List
@@ -19,15 +7,6 @@ import torch
 
 @dataclass
 class TimingStats:
-    """Statistics from a single timing session.
-
-    Tracks:
-    - Operation latencies (CPU operations use perf_counter_ns)
-    - GPU transfer times (using CUDA events when available)
-    - Value counts for throughput computation
-    """
-
-    # Time measurements (nanoseconds for CPU, milliseconds for GPU)
     cpu_to_gpu_transfer_ns: int = 0
     gpu_to_cpu_transfer_ns: int = 0
     quantize_ns: int = 0
@@ -35,49 +14,41 @@ class TimingStats:
     decode_ns: int = 0
     dequantize_ns: int = 0
 
-    # Value counts
     values_processed: int = 0
     bytes_transferred: int = 0
 
-    # Error correction stats (from codec)
     errors_corrected: int = 0
     errors_detected: int = 0
 
     @property
     def total_codec_ns(self) -> int:
-        """Total time spent in encode + decode operations."""
         return self.encode_ns + self.decode_ns
 
     @property
     def total_transfer_ns(self) -> int:
-        """Total time spent in CPU/GPU transfers."""
         return self.cpu_to_gpu_transfer_ns + self.gpu_to_cpu_transfer_ns
 
     @property
     def total_ns(self) -> int:
-        """Total time for complete operation."""
         return (
-            self.cpu_to_gpu_transfer_ns +
-            self.quantize_ns +
-            self.encode_ns +
-            self.decode_ns +
-            self.dequantize_ns +
-            self.gpu_to_cpu_transfer_ns
+            self.cpu_to_gpu_transfer_ns
+            + self.quantize_ns
+            + self.encode_ns
+            + self.decode_ns
+            + self.dequantize_ns
+            + self.gpu_to_cpu_transfer_ns
         )
 
     @property
     def encode_time_ms(self) -> float:
-        """Encode time in milliseconds."""
         return self.encode_ns / 1_000_000
 
     @property
     def decode_time_ms(self) -> float:
-        """Decode time in milliseconds."""
         return self.decode_ns / 1_000_000
 
     @property
     def throughput_mvalues_sec(self) -> float:
-        """Throughput in millions of values per second."""
         if self.total_codec_ns == 0:
             return 0.0
         seconds = self.total_codec_ns / 1_000_000_000
@@ -85,7 +56,6 @@ class TimingStats:
 
     @property
     def transfer_overhead_pct(self) -> float:
-        """Percentage of time spent in CPU/GPU transfers."""
         if self.total_ns == 0:
             return 0.0
         return 100.0 * self.total_transfer_ns / self.total_ns
@@ -93,13 +63,6 @@ class TimingStats:
 
 @dataclass
 class AggregatedTimingStats:
-    """Aggregated timing statistics across multiple operations.
-
-    Accumulates statistics from multiple TimingStats instances and
-    provides mean/std computation for benchmarking.
-    """
-
-    # Accumulated totals
     total_cpu_to_gpu_ns: int = 0
     total_gpu_to_cpu_ns: int = 0
     total_quantize_ns: int = 0
@@ -111,18 +74,14 @@ class AggregatedTimingStats:
     total_errors_corrected: int = 0
     total_errors_detected: int = 0
 
-    # For computing variance
     encode_times_ns: List[int] = field(default_factory=list)
     decode_times_ns: List[int] = field(default_factory=list)
 
-    # Count of operations
     n_operations: int = 0
 
-    # Flag indicating this is CPU-bound baseline (not GPU-native)
     is_cpu_bound: bool = True
 
     def add(self, stats: TimingStats) -> None:
-        """Add a TimingStats instance to the aggregate."""
         self.total_cpu_to_gpu_ns += stats.cpu_to_gpu_transfer_ns
         self.total_gpu_to_cpu_ns += stats.gpu_to_cpu_transfer_ns
         self.total_quantize_ns += stats.quantize_ns
@@ -139,7 +98,6 @@ class AggregatedTimingStats:
         self.n_operations += 1
 
     def reset(self) -> None:
-        """Reset all accumulated statistics."""
         self.total_cpu_to_gpu_ns = 0
         self.total_gpu_to_cpu_ns = 0
         self.total_quantize_ns = 0
@@ -156,39 +114,38 @@ class AggregatedTimingStats:
 
     @property
     def mean_encode_ms(self) -> float:
-        """Mean encode time in milliseconds."""
         if not self.encode_times_ns:
             return 0.0
         return (sum(self.encode_times_ns) / len(self.encode_times_ns)) / 1_000_000
 
     @property
     def std_encode_ms(self) -> float:
-        """Standard deviation of encode time in milliseconds."""
         if len(self.encode_times_ns) < 2:
             return 0.0
         mean = sum(self.encode_times_ns) / len(self.encode_times_ns)
-        variance = sum((x - mean) ** 2 for x in self.encode_times_ns) / len(self.encode_times_ns)
-        return (variance ** 0.5) / 1_000_000
+        variance = sum((x - mean) ** 2 for x in self.encode_times_ns) / len(
+            self.encode_times_ns
+        )
+        return (variance**0.5) / 1_000_000
 
     @property
     def mean_decode_ms(self) -> float:
-        """Mean decode time in milliseconds."""
         if not self.decode_times_ns:
             return 0.0
         return (sum(self.decode_times_ns) / len(self.decode_times_ns)) / 1_000_000
 
     @property
     def std_decode_ms(self) -> float:
-        """Standard deviation of decode time in milliseconds."""
         if len(self.decode_times_ns) < 2:
             return 0.0
         mean = sum(self.decode_times_ns) / len(self.decode_times_ns)
-        variance = sum((x - mean) ** 2 for x in self.decode_times_ns) / len(self.decode_times_ns)
-        return (variance ** 0.5) / 1_000_000
+        variance = sum((x - mean) ** 2 for x in self.decode_times_ns) / len(
+            self.decode_times_ns
+        )
+        return (variance**0.5) / 1_000_000
 
     @property
     def throughput_mvalues_sec(self) -> float:
-        """Overall throughput in millions of values per second."""
         total_codec_ns = self.total_encode_ns + self.total_decode_ns
         if total_codec_ns == 0:
             return 0.0
@@ -197,14 +154,13 @@ class AggregatedTimingStats:
 
     @property
     def transfer_overhead_pct(self) -> float:
-        """Percentage of time spent in CPU/GPU transfers."""
         total_ns = (
-            self.total_cpu_to_gpu_ns +
-            self.total_quantize_ns +
-            self.total_encode_ns +
-            self.total_decode_ns +
-            self.total_dequantize_ns +
-            self.total_gpu_to_cpu_ns
+            self.total_cpu_to_gpu_ns
+            + self.total_quantize_ns
+            + self.total_encode_ns
+            + self.total_decode_ns
+            + self.total_dequantize_ns
+            + self.total_gpu_to_cpu_ns
         )
         if total_ns == 0:
             return 0.0
@@ -212,7 +168,6 @@ class AggregatedTimingStats:
         return 100.0 * transfer_ns / total_ns
 
     def to_dict(self) -> Dict:
-        """Convert to dictionary for serialization."""
         return {
             "n_operations": self.n_operations,
             "total_values": self.total_values,
@@ -229,20 +184,6 @@ class AggregatedTimingStats:
 
 
 class TimingContext:
-    """Context manager for timing individual phases of the ECC pipeline.
-
-    Usage:
-        timing_stats = TimingStats()
-
-        with TimingContext(timing_stats, "encode"):
-            encoded = codec.encode(data)
-
-        with TimingContext(timing_stats, "decode"):
-            decoded = codec.decode(encoded)
-
-        print(f"Encode: {timing_stats.encode_time_ms:.3f}ms")
-    """
-
     PHASE_ATTRS = {
         "cpu_to_gpu": "cpu_to_gpu_transfer_ns",
         "gpu_to_cpu": "gpu_to_cpu_transfer_ns",
@@ -253,17 +194,14 @@ class TimingContext:
     }
 
     def __init__(self, stats: Optional[TimingStats], phase: str):
-        """
-        Args:
-            stats: TimingStats instance to update. If None, timing is disabled.
-            phase: Phase name (one of PHASE_ATTRS keys)
-        """
         self.stats = stats
         self.phase = phase
         self.start_time: int = 0
 
         if phase not in self.PHASE_ATTRS:
-            raise ValueError(f"Unknown phase: {phase}. Valid: {list(self.PHASE_ATTRS.keys())}")
+            raise ValueError(
+                f"Unknown phase: {phase}. Valid: {list(self.PHASE_ATTRS.keys())}"
+            )
 
     def __enter__(self):
         if self.stats is not None:
@@ -281,25 +219,10 @@ class TimingContext:
 
 @contextmanager
 def cuda_transfer_timer(stats: Optional[TimingStats], phase: str):
-    """Time GPU transfers using CUDA events for accurate measurement.
-
-    Falls back to CPU timing if CUDA is not available.
-
-    Args:
-        stats: TimingStats instance to update. If None, timing is disabled.
-        phase: Either "cpu_to_gpu" or "gpu_to_cpu"
-    """
     if stats is None:
         yield
         return
 
-    if not torch.cuda.is_available():
-        # Fall back to CPU timing
-        with TimingContext(stats, phase):
-            yield
-        return
-
-    # Use CUDA events for accurate GPU timing
     start_event = torch.cuda.Event(enable_timing=True)
     end_event = torch.cuda.Event(enable_timing=True)
 
@@ -307,7 +230,6 @@ def cuda_transfer_timer(stats: Optional[TimingStats], phase: str):
     yield
     end_event.record()
 
-    # Synchronize to get accurate timing
     torch.cuda.synchronize()
     elapsed_ms = start_event.elapsed_time(end_event)
     elapsed_ns = int(elapsed_ms * 1_000_000)
@@ -318,34 +240,23 @@ def cuda_transfer_timer(stats: Optional[TimingStats], phase: str):
 
 
 def run_warmup(func, n_iterations: int = 3, *args, **kwargs) -> None:
-    """Run warmup iterations to stabilize timing.
-
-    Important for accurate GPU benchmarks where first iterations
-    may include JIT compilation or memory allocation overhead.
-    """
     for _ in range(n_iterations):
         func(*args, **kwargs)
 
-    # Ensure GPU operations complete
-    if torch.cuda.is_available():
-        torch.cuda.synchronize()
+    torch.cuda.synchronize()
 
 
 if __name__ == "__main__":
-    # Quick test of timing infrastructure
     print("Timing Infrastructure Test")
     print("=" * 50)
 
-    # Test TimingStats
     stats = TimingStats()
 
     with TimingContext(stats, "encode"):
-        # Simulate encode operation
-        time.sleep(0.01)  # 10ms
+        time.sleep(0.01)
 
     with TimingContext(stats, "decode"):
-        # Simulate decode operation
-        time.sleep(0.005)  # 5ms
+        time.sleep(0.005)
 
     stats.values_processed = 1_000_000
 
@@ -354,17 +265,16 @@ if __name__ == "__main__":
     print(f"Total codec time: {stats.total_codec_ns / 1_000_000:.3f}ms")
     print(f"Throughput: {stats.throughput_mvalues_sec:.2f} MValues/sec")
 
-    # Test AggregatedTimingStats
     agg = AggregatedTimingStats()
 
     for _ in range(5):
         trial_stats = TimingStats()
 
         with TimingContext(trial_stats, "encode"):
-            time.sleep(0.008 + 0.002 * (torch.rand(1).item()))  # 8-10ms
+            time.sleep(0.008 + 0.002 * (torch.rand(1).item()))
 
         with TimingContext(trial_stats, "decode"):
-            time.sleep(0.004 + 0.002 * (torch.rand(1).item()))  # 4-6ms
+            time.sleep(0.004 + 0.002 * (torch.rand(1).item()))
 
         trial_stats.values_processed = 1_000_000
         agg.add(trial_stats)

@@ -1,17 +1,3 @@
-"""
-vLLM PagedAttention ECC Integration Kernels.
-
-This package provides GPU-native integration of ECC (Hamming/Golay) codecs
-with vLLM's PagedAttention KV cache management.
-
-Components:
-- memory_layout: Block table and cache allocation utilities
-- paged_cache_ecc: ECC-integrated cache write kernel
-- attention_ecc: ECC-integrated attention read kernel
-- adaptive_uep: Position-based codec routing (sink vs context)
-- benchmark_harness: Performance measurement utilities
-"""
-
 from .memory_layout import (
     ECCCacheConfig,
     allocate_ecc_kv_cache,

@@ -1,6 +1,6 @@
 from dataclasses import dataclass
-from typing import Dict, Any, List, Tuple, Optional
 import torch
+from hamming74 import Hamming74, Hamming84, Golay2412, ErrorType
 
 
 @dataclass
@@ -8,14 +8,14 @@ class NullSpaceResult:
     syndrome_zero_rate: float
     total_codewords: int
     valid_codewords: int
-    failed_syndromes: List[Tuple[int, int]]
+    failed_syndromes: list
 
 
 @dataclass
 class OrthogonalityResult:
     is_orthogonal: bool
     frobenius_norm: float
-    product_matrix: Optional[torch.Tensor]
+    product_matrix: torch.Tensor | None
 
 
 @dataclass
@@ -23,7 +23,7 @@ class RankResult:
     rank: int
     expected_rank: int
     is_full_rank: bool
-    condition_number: Optional[float]
+    condition_number: float | None
 
 
 @dataclass
@@ -54,7 +54,7 @@ class VerificationReport:
     all_passed: bool
 
 
-def compute_gf2_rank(matrix: torch.Tensor) -> int:
+def compute_gf2_rank(matrix):
     m = matrix.clone().float()
     rows, cols = m.shape
 
@@ -86,13 +86,11 @@ def compute_gf2_rank(matrix: torch.Tensor) -> int:
     return rank
 
 
-def hamming_distance(a: int, b: int) -> int:
+def hamming_distance(a, b):
     return bin(a ^ b).count("1")
 
 
-def verify_null_space_condition(
-    G: torch.Tensor, H: torch.Tensor, device="cuda"
-) -> NullSpaceResult:
+def verify_null_space_condition(G, H, device="cuda"):
     k, n = G.shape
     G = G.to(device).float()
     H = H.to(device).float()
@@ -124,9 +122,7 @@ def verify_null_space_condition(
     )
 
 
-def verify_subspace_orthogonality(
-    G: torch.Tensor, H: torch.Tensor, device="cuda"
-) -> OrthogonalityResult:
+def verify_subspace_orthogonality(G, H, device="cuda"):
     G = G.to(device).float()
     H = H.to(device).float()
 
@@ -141,9 +137,7 @@ def verify_subspace_orthogonality(
     )
 
 
-def verify_basis_independence(
-    G: torch.Tensor, expected_rank: int, device="cuda"
-) -> RankResult:
+def verify_basis_independence(G, expected_rank, device="cuda"):
     G = G.to(device)
 
     rank = compute_gf2_rank(G)
@@ -168,9 +162,7 @@ def verify_basis_independence(
     )
 
 
-def compute_error_amplification_hamming74(device="cuda") -> ErrorAmplificationResult:
-    from hamming74 import Hamming74
-
+def compute_error_amplification_hamming74(device="cuda"):
     codec = Hamming74(device=device)
 
     all_inputs = torch.arange(16, dtype=torch.uint8, device=device)
@@ -237,9 +229,7 @@ def compute_error_amplification_hamming74(device="cuda") -> ErrorAmplificationRe
     )
 
 
-def compute_error_amplification_hamming84(device="cuda") -> ErrorAmplificationResult:
-    from hamming74 import Hamming84, ErrorType
-
+def compute_error_amplification_hamming84(device="cuda"):
     codec = Hamming84(device=device, on_double_error="zero")
 
     all_inputs = torch.arange(16, dtype=torch.uint8, device=device)
@@ -309,9 +299,7 @@ def compute_error_amplification_hamming84(device="cuda") -> ErrorAmplificationRe
     )
 
 
-def verify_hamming74(device="cuda") -> VerificationReport:
-    from hamming74 import Hamming74
-
+def verify_hamming74(device="cuda"):
     G = Hamming74.G.clone()
     H = Hamming74.H.clone()
 
@@ -338,9 +326,7 @@ def verify_hamming74(device="cuda") -> VerificationReport:
     )
 
 
-def verify_hamming84(device="cuda") -> VerificationReport:
-    from hamming74 import Hamming84
-
+def verify_hamming84(device="cuda"):
     G = Hamming84.G_74.clone()
     H = Hamming84.H_74.clone()
 
@@ -368,9 +354,7 @@ def verify_hamming84(device="cuda") -> VerificationReport:
     )
 
 
-def verify_golay2412(device="cuda") -> VerificationReport:
-    from hamming74 import Golay2412
-
+def verify_golay2412(device="cuda"):
     codec = Golay2412(device=device)
     G = codec.G.clone()
     H = codec.H.clone()
@@ -437,7 +421,7 @@ def verify_golay2412(device="cuda") -> VerificationReport:
     )
 
 
-def format_verification_report(report: VerificationReport) -> str:
+def format_verification_report(report):
     lines = []
     lines.append("=" * 80)
     lines.append(f"LINEAR ALGEBRA VERIFICATION: {report.code_name}")
@@ -484,21 +468,11 @@ def format_verification_report(report: VerificationReport) -> str:
     lines.append(f"   Δd_H = 0: Error detected (safe failure)")
     lines.append(f"   Δd_H > 0: Miscorrection (dangerous)")
     lines.append("")
-    lines.append(
-        f"   Single-bit error correction rate: {report.error_amplification.single_correction_rate*100:.1f}%"
-    )
-    lines.append(
-        f"   Mean Δd_H (single-bit): {report.error_amplification.mean_delta_dh_single:.4f}"
-    )
-    lines.append(
-        f"   Double-bit detection rate: {report.error_amplification.double_detection_rate*100:.1f}%"
-    )
-    lines.append(
-        f"   Mean Δd_H (double-bit): {report.error_amplification.mean_delta_dh_double:.4f}"
-    )
-    lines.append(
-        f"   Miscorrection rate: {report.error_amplification.miscorrection_rate*100:.1f}%"
-    )
+    lines.append(f"Single-bit error correction rate: {report.error_amplification.single_correction_rate*100:.1f}%")
+    lines.append(f"Mean Δd_H (single-bit): {report.error_amplification.mean_delta_dh_single:.4f}")
+    lines.append(f"Double-bit detection rate: {report.error_amplification.double_detection_rate*100:.1f}%")
+    lines.append(f"Mean Δd_H (double-bit): {report.error_amplification.mean_delta_dh_double:.4f}")
+    lines.append(f"Miscorrection rate: {report.error_amplification.miscorrection_rate*100:.1f}%")
 
     lines.append("")
     lines.append("=" * 80)
@@ -509,7 +483,7 @@ def format_verification_report(report: VerificationReport) -> str:
     return "\n".join(lines)
 
 
-def run_all_verifications(device="cuda") -> Dict[str, VerificationReport]:
+def run_all_verifications(device="cuda"):
     reports = {}
 
     print("Running Hamming(7,4) verification...")

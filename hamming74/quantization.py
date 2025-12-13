@@ -1,5 +1,4 @@
 import torch
-from typing import Tuple, Optional
 
 
 class INT4Quantizer:
@@ -7,18 +6,11 @@ class INT4Quantizer:
     QMAX = 15
     ZERO_POINT = 8
 
-    def __init__(
-        self,
-        block_size: int = 32,
-        dtype: torch.dtype = torch.float16,
-    ):
+    def __init__(self, block_size=32, dtype=torch.float16):
         self.block_size = block_size
         self.dtype = dtype
 
-    def quantize(
-        self,
-        x: torch.Tensor,
-    ) -> Tuple[torch.Tensor, torch.Tensor]:
+    def quantize(self, x):
         original_shape = x.shape
         device = x.device
 
@@ -51,11 +43,7 @@ class INT4Quantizer:
 
         return q, scales
 
-    def dequantize(
-        self,
-        q: torch.Tensor,
-        scales: torch.Tensor,
-    ) -> torch.Tensor:
+    def dequantize(self, q, scales):
         original_shape = q.shape
         device = q.device
 
@@ -87,10 +75,10 @@ class INT4QuantizerSimple:
     QMAX = 15
     ZERO_POINT = 8
 
-    def __init__(self, dtype: torch.dtype = torch.float16):
+    def __init__(self, dtype=torch.float16):
         self.dtype = dtype
 
-    def quantize(self, x: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
+    def quantize(self, x):
         max_abs = x.abs().max().clamp(min=1e-8)
         scale = max_abs / 7.0
 
@@ -99,7 +87,7 @@ class INT4QuantizerSimple:
 
         return q, scale.unsqueeze(0)
 
-    def dequantize(self, q: torch.Tensor, scale: torch.Tensor) -> torch.Tensor:
+    def dequantize(self, q, scale):
         return ((q.to(self.dtype) - self.ZERO_POINT) * scale).to(self.dtype)
 
 

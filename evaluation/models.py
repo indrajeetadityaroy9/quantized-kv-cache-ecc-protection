@@ -1,20 +1,9 @@
 import os
-from typing import Optional, Tuple, Union
-
 import torch
-
+from transformers import AutoModelForCausalLM, AutoTokenizer
 from .constants import MODELS, DEFAULT_MODEL
 
-
-def load_model(
-    model_name: str = DEFAULT_MODEL,
-    device: str = "auto",
-    dtype: Optional[torch.dtype] = None,
-    hf_token: Optional[str] = None,
-    trust_remote_code: bool = True,
-):
-    from transformers import AutoModelForCausalLM, AutoTokenizer
-
+def load_model(model_name=DEFAULT_MODEL, device="auto", dtype=None, hf_token=None, trust_remote_code=True):
     if model_name in MODELS:
         hf_id = MODELS[model_name]["hf_id"]
         requires_auth = MODELS[model_name].get("requires_auth", False)
@@ -65,36 +54,33 @@ def load_model(
     return model, tokenizer
 
 
-def _resolve_device(device: str) -> str:
+def _resolve_device(device):
     if device == "auto":
         return "cuda"
     return device
 
 
-def _resolve_dtype(
-    dtype: Optional[torch.dtype],
-    device: str,
-) -> torch.dtype:
+def _resolve_dtype(dtype, device):
     if dtype is not None:
         return dtype
 
     return torch.float16
 
 
-def _is_large_model(model_name: str) -> bool:
+def _is_large_model(model_name):
     if model_name in MODELS:
         return MODELS[model_name].get("layers", 0) > 20
 
     return any(x in model_name.lower() for x in ["7b", "8b", "13b", "70b", "llama"])
 
 
-def get_model_info(model_name: str) -> dict:
+def get_model_info(model_name):
     if model_name in MODELS:
         return MODELS[model_name].copy()
     return {"hf_id": model_name, "type": "unknown"}
 
 
-def get_device_for_model(model_name: str) -> str:
+def get_device_for_model(model_name):
     if model_name in MODELS:
         return MODELS[model_name].get("gpu", "T4")
     return "T4"

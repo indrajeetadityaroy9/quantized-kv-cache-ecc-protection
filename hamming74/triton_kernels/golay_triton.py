@@ -1,9 +1,9 @@
 import torch
 import triton
 import triton.language as tl
-from typing import Tuple
 
 from .config import GOLAY_BLOCK_SIZE, GOLAY_PARITY_MASKS
+from ..golay import Golay2412
 
 
 B_COL_0 = 0b101000111011
@@ -206,11 +206,9 @@ _syndrome_table_cache = {}
 UNCORRECTABLE_MARKER = -1
 
 
-def _build_syndrome_table(device: str = "cuda") -> torch.Tensor:
+def _build_syndrome_table(device="cuda"):
     if device in _syndrome_table_cache:
         return _syndrome_table_cache[device]
-
-    from ..golay import Golay2412
 
     cpu_codec = Golay2412(device="cuda")
 
@@ -224,7 +222,7 @@ def _build_syndrome_table(device: str = "cuda") -> torch.Tensor:
     return table
 
 
-def _build_h_row_masks() -> Tuple[int, ...]:
+def _build_h_row_masks():
     B = [
         [1, 1, 0, 1, 1, 1, 0, 0, 0, 1, 0, 1],
         [1, 0, 1, 1, 1, 0, 0, 0, 1, 0, 1, 1],
@@ -257,7 +255,7 @@ def _build_h_row_masks() -> Tuple[int, ...]:
 _H_ROW_MASKS = _build_h_row_masks()
 
 
-def golay_encode(triplets: torch.Tensor) -> torch.Tensor:
+def golay_encode(triplets):
     assert triplets.is_cuda, "Input must be on CUDA device"
 
     if triplets.dim() == 1:
@@ -291,10 +289,7 @@ def golay_encode(triplets: torch.Tensor) -> torch.Tensor:
     return codewords
 
 
-def golay_decode(
-    codewords: torch.Tensor,
-    return_error_counts: bool = False,
-) -> Tuple[torch.Tensor, ...]:
+def golay_decode(codewords, return_error_counts=False):
     assert codewords.is_cuda, "Input must be on CUDA device"
 
     N = codewords.numel()
@@ -344,8 +339,6 @@ def golay_decode(
 
 
 def verify_triton_vs_cpu():
-    from ..golay import Golay2412
-
     device = "cuda"
     cpu_codec = Golay2412(device="cuda")
 

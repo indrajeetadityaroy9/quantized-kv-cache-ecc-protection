@@ -1,18 +1,9 @@
 import math
-from typing import List, Tuple, Optional, Dict, Any
-
 import torch
 import torch.nn.functional as F
 
 
-def compute_perplexity(
-    model: Any,
-    tokenizer: Any,
-    texts: List[str],
-    max_length: int = 512,
-    stride: int = 256,
-    device: Optional[str] = None,
-) -> float:
+def compute_perplexity(model, tokenizer, texts, max_length=512, stride=256, device=None):
     model.eval()
 
     if device is None:
@@ -73,11 +64,7 @@ def compute_perplexity(
     return math.exp(avg_loss)
 
 
-def compute_kl_divergence(
-    logits_a: torch.Tensor,
-    logits_b: torch.Tensor,
-    temperature: float = 1.0,
-) -> float:
+def compute_kl_divergence(logits_a, logits_b, temperature=1.0):
     log_p = F.log_softmax(logits_a / temperature, dim=-1)
     log_q = F.log_softmax(logits_b / temperature, dim=-1)
 
@@ -87,7 +74,7 @@ def compute_kl_divergence(
     return kl.item()
 
 
-def load_wikitext2_test(max_samples: int = 100) -> List[str]:
+def load_wikitext2_test(max_samples=100):
     try:
         from datasets import load_dataset
 
@@ -102,10 +89,7 @@ def load_wikitext2_test(max_samples: int = 100) -> List[str]:
         ][:max_samples]
 
 
-def compute_catastrophic_rate(
-    perplexities: List[float],
-    threshold: float = 1000.0,
-) -> float:
+def compute_catastrophic_rate(perplexities, threshold=1000.0):
     if not perplexities:
         return 0.0
 
@@ -115,14 +99,7 @@ def compute_catastrophic_rate(
     return catastrophic_count / len(perplexities)
 
 
-def compute_top5_accuracy(
-    model: Any,
-    tokenizer: Any,
-    texts: List[str],
-    clean_logits_cache: Optional[Dict[str, torch.Tensor]] = None,
-    max_length: int = 256,
-    device: Optional[str] = None,
-) -> Tuple[float, Dict[str, torch.Tensor]]:
+def compute_top5_accuracy(model, tokenizer, texts, clean_logits_cache=None, max_length=256, device=None):
     model.eval()
 
     if device is None:
@@ -164,14 +141,7 @@ def compute_top5_accuracy(
     return accuracy
 
 
-def compute_mean_kl_divergence(
-    model: Any,
-    tokenizer: Any,
-    texts: List[str],
-    clean_logits_list: List[torch.Tensor],
-    max_length: int = 256,
-    device: Optional[str] = None,
-) -> float:
+def compute_mean_kl_divergence(model, tokenizer, texts, clean_logits_list, max_length=256, device=None):
     model.eval()
 
     if device is None:
@@ -213,13 +183,7 @@ def compute_mean_kl_divergence(
     return sum(kl_values) / len(kl_values) if kl_values else 0.0
 
 
-def generate_clean_logits(
-    model: Any,
-    tokenizer: Any,
-    texts: List[str],
-    max_length: int = 256,
-    device: Optional[str] = None,
-) -> List[torch.Tensor]:
+def generate_clean_logits(model, tokenizer, texts, max_length=256, device=None):
     model.eval()
 
     if device is None:
@@ -248,14 +212,7 @@ def generate_clean_logits(
     return logits_list
 
 
-def compute_per_sample_perplexity(
-    model: Any,
-    tokenizer: Any,
-    texts: List[str],
-    max_length: int = 512,
-    stride: int = 256,
-    device: Optional[str] = None,
-) -> List[float]:
+def compute_per_sample_perplexity(model, tokenizer, texts, max_length=512, stride=256, device=None):
     model.eval()
 
     if device is None:

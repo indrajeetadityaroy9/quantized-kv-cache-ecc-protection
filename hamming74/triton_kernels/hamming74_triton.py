@@ -1,12 +1,12 @@
 import torch
 import triton
 import triton.language as tl
-from typing import Tuple
 
 from .config import (
     HAMMING74_BLOCK_SIZE,
     SYNDROME_LUT_HAMMING74,
 )
+from ..hamming74_sec import Hamming74
 
 
 @triton.jit
@@ -117,7 +117,7 @@ def hamming74_decode_kernel(
     tl.store(error_detected_ptr + offsets, error_detected, mask=mask)
 
 
-def hamming74_encode(int4_values: torch.Tensor) -> torch.Tensor:
+def hamming74_encode(int4_values):
     assert int4_values.is_cuda, "Input must be on CUDA device"
 
     original_shape = int4_values.shape
@@ -137,10 +137,7 @@ def hamming74_encode(int4_values: torch.Tensor) -> torch.Tensor:
     return codewords.view(original_shape)
 
 
-def hamming74_decode(
-    codewords: torch.Tensor,
-    return_error_detected: bool = False,
-) -> Tuple[torch.Tensor, ...]:
+def hamming74_decode(codewords, return_error_detected=False):
     assert codewords.is_cuda, "Input must be on CUDA device"
 
     original_shape = codewords.shape
@@ -181,8 +178,6 @@ def hamming74_decode(
 
 
 def verify_triton_vs_cpu():
-    from ..hamming74_sec import Hamming74
-
     device = "cuda"
     cpu_codec = Hamming74(device="cuda")
 

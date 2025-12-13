@@ -1,25 +1,13 @@
 import torch
-from typing import Literal
-
 
 HAMMING74_BLOCK_SIZE = 1024
-
-
 HAMMING84_BLOCK_SIZE = 1024
-
-
 GOLAY_BLOCK_SIZE = 256
-
-
 FAULT_INJECTION_BLOCK_SIZE = 1024
-
-
 INTERPOLATION_BLOCK_SIZE = 1024
 
 
-def get_physical_dtype(
-    codec: Literal["hamming74", "hamming84", "golay", "int4", "none"]
-) -> torch.dtype:
+def get_physical_dtype(codec):
     if codec == "hamming74":
         return torch.uint8
     elif codec == "hamming84":
@@ -34,7 +22,7 @@ def get_physical_dtype(
         raise ValueError(f"Unknown codec: {codec}")
 
 
-def get_codeword_bits(codec: Literal["hamming74", "hamming84", "golay"]) -> int:
+def get_codeword_bits(codec):
     if codec == "hamming74":
         return 7
     elif codec == "hamming84":
@@ -45,7 +33,7 @@ def get_codeword_bits(codec: Literal["hamming74", "hamming84", "golay"]) -> int:
         raise ValueError(f"Unknown codec: {codec}")
 
 
-def get_data_bits(codec: Literal["hamming74", "hamming84", "golay"]) -> int:
+def get_data_bits(codec):
     if codec == "hamming74":
         return 4
     elif codec == "hamming84":

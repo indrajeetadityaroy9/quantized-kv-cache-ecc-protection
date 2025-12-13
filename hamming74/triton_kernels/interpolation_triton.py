@@ -1,7 +1,6 @@
 import torch
 import triton
 import triton.language as tl
-from typing import Optional, Tuple
 
 from .config import INTERPOLATION_BLOCK_SIZE, ErrorType
 
@@ -48,12 +47,7 @@ def interpolate_double_errors_kernel(
     tl.store(output_ptr + base + offsets, result, mask=mask)
 
 
-def interpolate_double_errors(
-    q: torch.Tensor,
-    error_type: torch.Tensor,
-    original_shape: Optional[Tuple[int, ...]] = None,
-    seq_dim: int = -1,
-) -> torch.Tensor:
+def interpolate_double_errors(q, error_type, original_shape=None, seq_dim=-1):
     assert q.is_cuda, "Input must be on CUDA device"
     assert error_type.is_cuda, "Error type must be on CUDA device"
     assert q.shape == error_type.shape, "Shape mismatch between q and error_type"
@@ -109,10 +103,7 @@ def interpolate_double_errors(
     return output.reshape(input_shape)
 
 
-def interpolate_double_errors_1d(
-    q: torch.Tensor,
-    error_type: torch.Tensor,
-) -> torch.Tensor:
+def interpolate_double_errors_1d(q, error_type):
     return interpolate_double_errors(q, error_type, seq_dim=-1)
 
 

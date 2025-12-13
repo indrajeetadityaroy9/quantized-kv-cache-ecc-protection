@@ -1,7 +1,6 @@
 import torch
 import triton
 import triton.language as tl
-from typing import Tuple, Optional
 
 from .config import FAULT_INJECTION_BLOCK_SIZE
 
@@ -116,13 +115,7 @@ def fault_inject_int32_kernel(
     tl.store(error_count_ptr + offsets, error_count.to(tl.uint8), mask=mask)
 
 
-def inject_bit_errors_triton(
-    data: torch.Tensor,
-    ber: float,
-    n_bits: int,
-    seed: int = 0,
-    return_stats: bool = False,
-) -> Tuple[torch.Tensor, ...]:
+def inject_bit_errors_triton(data, ber, n_bits, seed=0, return_stats=False):
     assert data.is_cuda, "Input must be on CUDA device"
 
     if ber <= 0:
@@ -181,25 +174,14 @@ def inject_bit_errors_triton(
     return corrupted
 
 
-def inject_bit_errors_triton_batched(
-    data: torch.Tensor,
-    ber: float,
-    n_bits: int,
-    seed: int = 0,
-) -> Tuple[torch.Tensor, int]:
+def inject_bit_errors_triton_batched(data, ber, n_bits, seed=0):
     corrupted, (total_errors, _) = inject_bit_errors_triton(
         data, ber, n_bits, seed, return_stats=True
     )
     return corrupted, total_errors
 
 
-def verify_triton_fault_injection(
-    target_ber: float = 0.05,
-    n_values: int = 100_000,
-    n_bits: int = 8,
-    seed: int = 42,
-    tolerance: float = 0.01,
-) -> dict:
+def verify_triton_fault_injection(target_ber=0.05, n_values=100_000, n_bits=8, seed=42, tolerance=0.01):
     device = "cuda"
 
     if n_bits <= 8:
@@ -227,12 +209,7 @@ def verify_triton_fault_injection(
     return result
 
 
-def verify_determinism(
-    ber: float = 0.1,
-    n_values: int = 10_000,
-    n_bits: int = 8,
-    seed: int = 42,
-) -> bool:
+def verify_determinism(ber=0.1, n_values=10_000, n_bits=8, seed=42):
     device = "cuda"
 
     if n_bits <= 8:

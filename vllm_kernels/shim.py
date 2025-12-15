@@ -26,22 +26,48 @@ class ECCDummyCache:
     a placeholder to prevent errors when use_cache=True.
     """
 
-    def __init__(self):
+    def __init__(self, num_layers=0):
         self.key_cache = []
         self.value_cache = []
+        self._num_layers = num_layers
+        self._seen_tokens = 0
+
+    def __len__(self):
+        """Return number of layers in the cache."""
+        return self._num_layers
+
+    def __iter__(self):
+        """Iterate over cache layers."""
+        for i in range(len(self.key_cache)):
+            yield (self.key_cache[i], self.value_cache[i])
+
+    def __getitem__(self, layer_idx):
+        """Get cache for a specific layer."""
+        if layer_idx < len(self.key_cache):
+            return (self.key_cache[layer_idx], self.value_cache[layer_idx])
+        return (None, None)
 
     def to_legacy_cache(self):
         """Return empty tuple for legacy cache format."""
         return ()
 
     def get_seq_length(self, layer_idx=0):
-        return 0
+        return self._seen_tokens
 
     def get_max_length(self):
         return None
 
+    def get_usable_length(self, new_seq_length, layer_idx=0):
+        """Return usable cache length."""
+        return self._seen_tokens
+
     def update(self, key_states, value_states, layer_idx, cache_kwargs=None):
+        self._seen_tokens += key_states.shape[-2]
         return key_states, value_states
+
+    @property
+    def seen_tokens(self):
+        return self._seen_tokens
 
 
 class ECCShimConfig:
@@ -914,14 +940,18 @@ class ECCPagedAttentionShim(nn.Module):
         attn_output = attn_output.view(batch_size, seq_len, self.hidden_size)
         output = self.o_proj(attn_output)
 
-        if not output_attentions and not use_cache:
-            return output, None
-        elif use_cache:
-            # Return ECCDummyCache to satisfy transformers cache interface
-            dummy_cache = ECCDummyCache()
-            return output, None, dummy_cache
+        # Always return 3 values: (output, attn_weights, past_key_value)
+        # This matches the expected signature of LlamaAttention.forward()
+        attn_weights = None  # We don't compute attention weights
+
+        if use_cache:
+            # Get num_layers from backend's manager
+            num_layers = self.backend.manager.num_layers
+            past_key_value = ECCDummyCache(num_layers=num_layers)
         else:
-            return output, None
+            past_key_value = None
+
+        return output, attn_weights, past_key_value
 
     def _apply_rotary_pos_emb(
         self,

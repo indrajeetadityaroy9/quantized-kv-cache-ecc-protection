@@ -25,6 +25,21 @@ image = (
     .add_local_dir(".", remote_path="/app")
 )
 
+vllm_image = (
+    modal.Image.debian_slim(python_version="3.11")
+    .pip_install(
+        "torch>=2.0.0",
+        "triton>=2.1.0",
+        "vllm>=0.6.0",
+        "numpy>=1.21.0",
+        "transformers>=4.40.0,<4.45.0",
+        "datasets>=2.14.0",
+        "accelerate",
+        "huggingface-hub",
+    )
+    .add_local_dir(".", remote_path="/app")
+)
+
 model_cache = modal.Volume.from_name("hamming74-model-cache", create_if_missing=True)
 output_volume = modal.Volume.from_name("hamming74-results", create_if_missing=True)
 
@@ -161,6 +176,144 @@ def get_results(run_name):
             result["files"]["metrics.txt"] = f.read()
 
     return result
+
+
+@app.function(
+    image=vllm_image,
+    gpu="A100-80GB",
+    timeout=7200,
+    volumes={"/cache": model_cache, "/output": output_volume},
+    secrets=[hf_secret],
+)
+def run_vllm_comparison(
+    model_name="TinyLlama/TinyLlama-1.1B-Chat-v1.0",
+    batch_sizes=None,
+    seq_lengths=None,
+    num_samples=100,
+    compute_perplexity=True,
+    save_to_volume=True,
+):
+    """Run vLLM vs ECC-protected KV cache comparison benchmark."""
+    os.chdir("/app")
+    sys.path.insert(0, "/app")
+    os.environ["HF_HOME"] = "/cache/huggingface"
+    os.environ["TRANSFORMERS_CACHE"] = "/cache/huggingface"
+
+    from evaluation.experiments.vllm_comparison import (
+        VLLMComparisonConfig,
+        run_full_comparison,
+    )
+
+    if batch_sizes is None:
+        batch_sizes = [1, 4, 8]
+    if seq_lengths is None:
+        seq_lengths = [512, 1024]
+
+    config = VLLMComparisonConfig(
+        model_name=model_name,
+        batch_sizes=batch_sizes,
+        seq_lengths=seq_lengths,
+        num_samples=num_samples,
+        compute_perplexity=compute_perplexity,
+    )
+
+    def progress(msg, curr, total):
+        print(f"[{curr}/{total}] {msg}")
+
+    report = run_full_comparison(config, progress)
+
+    print("\n" + report.get_full_report())
+
+    if save_to_volume:
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        output_path = f"/output/vllm_comparison_{timestamp}"
+        os.makedirs(output_path, exist_ok=True)
+
+        with open(f"{output_path}/results.json", "w") as f:
+            json.dump(report.to_dict(), f, indent=2)
+
+        with open(f"{output_path}/summary.txt", "w") as f:
+            f.write(report.get_full_report())
+
+        with open(f"{output_path}/throughput_table.md", "w") as f:
+            f.write("# vLLM vs ECC Throughput Comparison\n\n")
+            f.write(report.get_throughput_table())
+            f.write("\n\n")
+            f.write(report.get_overhead_table())
+
+        with open(f"{output_path}/quality_table.md", "w") as f:
+            f.write("# Quality Comparison\n\n")
+            f.write(report.get_perplexity_table())
+            f.write("\n\n")
+            f.write(report.get_memory_table())
+
+        output_volume.commit()
+        print(f"\nResults saved to: {output_path}")
+        print(f"To download: modal volume get hamming74-results vllm_comparison_{timestamp} ./results/")
+
+    return report.to_dict()
+
+
+@app.function(
+    image=vllm_image,
+    gpu="A100-80GB",
+    timeout=10800,  # 3 hours - BER sweep takes longer
+    volumes={"/cache": model_cache, "/output": output_volume},
+    secrets=[hf_secret],
+)
+def run_ber_sweep(
+    model_name="TinyLlama/TinyLlama-1.1B-Chat-v1.0",
+    ber_levels=None,
+    perplexity_samples=50,
+    save_to_volume=True,
+):
+    """
+    Run BER sweep comparison: vLLM (unprotected) vs ECC-protected.
+
+    Demonstrates how vanilla vLLM degrades with bit errors while
+    ECC-protected configurations maintain quality.
+    """
+    os.chdir("/app")
+    sys.path.insert(0, "/app")
+    os.environ["HF_HOME"] = "/cache/huggingface"
+    os.environ["TRANSFORMERS_CACHE"] = "/cache/huggingface"
+
+    from evaluation.experiments.vllm_comparison import run_ber_sweep_impl
+
+    if ber_levels is None:
+        ber_levels = [0.0, 1e-4, 1e-3, 1e-2]
+
+    results = run_ber_sweep_impl(
+        model_name=model_name,
+        ber_levels=ber_levels,
+        perplexity_samples=perplexity_samples,
+    )
+
+    if save_to_volume:
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        output_path = f"/output/ber_sweep_{timestamp}"
+        os.makedirs(output_path, exist_ok=True)
+
+        with open(f"{output_path}/results.json", "w") as f:
+            json.dump(results, f, indent=2)
+
+        with open(f"{output_path}/ber_sweep_table.txt", "w") as f:
+            f.write(results.get("formatted_table", "No table"))
+
+        with open(f"{output_path}/summary.txt", "w") as f:
+            f.write("=" * 80 + "\n")
+            f.write("BER SWEEP: vLLM vs ECC-Protected KV Cache\n")
+            f.write("=" * 80 + "\n\n")
+            f.write(f"Model: {model_name}\n")
+            f.write(f"BER levels: {ber_levels}\n")
+            f.write(f"Perplexity samples: {perplexity_samples}\n\n")
+            f.write(results.get("formatted_table", "No table"))
+
+        output_volume.commit()
+        print(f"\nResults saved to: {output_path}")
+        print(f"To download: modal volume get hamming74-results ber_sweep_{timestamp} ./results/")
+
+    return results
 
 
 @app.function(
@@ -590,6 +743,14 @@ def main(
     triton_seeds=3,
     triton_samples=50,
     benchmark_kernels=False,
+    vllm_comparison=False,
+    vllm_model="TinyLlama/TinyLlama-1.1B-Chat-v1.0",
+    vllm_batch_sizes="1,4,8",
+    vllm_seq_lengths="512,1024",
+    vllm_samples=100,
+    ber_sweep=False,
+    ber_levels="0.0,1e-4,1e-3,1e-2",
+    ber_sweep_samples=50,
     list_results_flag=False,
     pull_results=None,
     pull_latest=False,
@@ -703,6 +864,70 @@ def main(
         print("LATENCY BENCHMARK COMPLETE")
         print("=" * 70)
         print(f"\nBenchmarked {len(results.get('results', []))} configurations")
+
+    elif vllm_comparison:
+        print("\n" + "=" * 70)
+        print("vLLM vs ECC-PROTECTED KV CACHE COMPARISON")
+        print("=" * 70)
+
+        batch_sizes = [int(x) for x in vllm_batch_sizes.split(",")]
+        seq_lengths = [int(x) for x in vllm_seq_lengths.split(",")]
+        num_samples = int(vllm_samples) if isinstance(vllm_samples, str) else vllm_samples
+
+        print(f"\nModel: {vllm_model}")
+        print(f"Batch sizes: {batch_sizes}")
+        print(f"Sequence lengths: {seq_lengths}")
+        print(f"Samples: {num_samples}")
+        print("=" * 70)
+
+        results = run_vllm_comparison.remote(
+            model_name=vllm_model,
+            batch_sizes=batch_sizes,
+            seq_lengths=seq_lengths,
+            num_samples=num_samples,
+            compute_perplexity=True,
+        )
+
+        print("\n" + "=" * 70)
+        print("vLLM COMPARISON COMPLETE")
+        print("=" * 70)
+
+        if results.get("results"):
+            print(f"\nBenchmarked {len(results['results'])} configurations")
+
+    elif ber_sweep:
+        print("\n" + "=" * 70)
+        print("BER SWEEP: vLLM vs ECC-PROTECTED KV CACHE")
+        print("=" * 70)
+
+        # Parse BER levels
+        parsed_ber_levels = [float(x) for x in ber_levels.split(",")]
+        ber_sweep_samples_int = int(ber_sweep_samples) if isinstance(ber_sweep_samples, str) else ber_sweep_samples
+
+        print(f"\nModel: {vllm_model}")
+        print(f"BER levels: {parsed_ber_levels}")
+        print(f"Perplexity samples: {ber_sweep_samples_int}")
+        print("")
+        print("This benchmark compares:")
+        print("  - vLLM FP16/FP8 (unprotected, degrades with errors)")
+        print("  - ECC Hamming84/Golay (protected, corrects errors)")
+        print("=" * 70)
+
+        results = run_ber_sweep.remote(
+            model_name=vllm_model,
+            ber_levels=parsed_ber_levels,
+            perplexity_samples=ber_sweep_samples_int,
+        )
+
+        print("\n" + "=" * 70)
+        print("BER SWEEP COMPLETE")
+        print("=" * 70)
+
+        if results.get("formatted_table"):
+            print(results["formatted_table"])
+
+        if results.get("results"):
+            print(f"\nProcessed {len(results['results'])} configurations")
 
     elif benchmark_kernels:
         print("\n" + "=" * 70)

@@ -21,7 +21,7 @@ class TestFaultInjectionStats:
     """Tests for the FaultInjectionStats class."""
 
     def test_stats_initialization(self):
-        from evaluation.experiments.vllm_comparison import FaultInjectionStats
+        from evaluation.experiments.fault_tolerance_benchmark import FaultInjectionStats
 
         stats = FaultInjectionStats()
         result = stats.get_stats()
@@ -32,7 +32,7 @@ class TestFaultInjectionStats:
         assert result["effective_ber"] == 0.0
 
     def test_stats_tracking(self):
-        from evaluation.experiments.vllm_comparison import FaultInjectionStats
+        from evaluation.experiments.fault_tolerance_benchmark import FaultInjectionStats
 
         stats = FaultInjectionStats()
         stats.add_bits_processed(1000)
@@ -45,7 +45,7 @@ class TestFaultInjectionStats:
         assert result["effective_ber"] == 0.01
 
     def test_stats_reset(self):
-        from evaluation.experiments.vllm_comparison import FaultInjectionStats
+        from evaluation.experiments.fault_tolerance_benchmark import FaultInjectionStats
 
         stats = FaultInjectionStats()
         stats.add_bits_processed(1000)
@@ -88,7 +88,7 @@ class TestStochasticErrorInjection:
         Test that PyTorch fallback uses stochastic error injection,
         not deterministic truncation.
         """
-        from evaluation.experiments.vllm_comparison import FaultInjectionStats
+        from evaluation.experiments.fault_tolerance_benchmark import FaultInjectionStats
 
         stats = FaultInjectionStats()
 
@@ -128,7 +128,7 @@ class TestStochasticErrorInjection:
         This is a critical test that verifies the fix for the deterministic
         truncation bug in the original implementation.
         """
-        from hamming74.triton_kernels import inject_bit_errors_triton
+        from ecc_codecs.triton_kernels import inject_bit_errors_triton
 
         # Large tensor for statistical accuracy
         n_elements = 100_000
@@ -163,7 +163,7 @@ class TestFP16ErrorInjection:
 
     def test_fp16_error_injection_degrades_values(self):
         """Test that bit errors actually degrade FP16 tensor values."""
-        from hamming74.triton_kernels import inject_bit_errors_triton
+        from ecc_codecs.triton_kernels import inject_bit_errors_triton
 
         tensor = torch.randn(1000, dtype=torch.float16, device="cuda")
         original = tensor.clone()
@@ -221,7 +221,7 @@ class TestGPUSynchronization:
 
         This ensures that error injection completes before subsequent operations.
         """
-        from hamming74.triton_kernels import inject_bit_errors_triton
+        from ecc_codecs.triton_kernels import inject_bit_errors_triton
 
         tensor = torch.zeros(10000, dtype=torch.int16, device="cuda")
         corrupted, _ = inject_bit_errors_triton(
@@ -244,7 +244,7 @@ class TestErrorInjectionIntegration:
     )
     def test_full_injection_pipeline_fp16(self):
         """Test complete error injection for FP16 tensor."""
-        from hamming74.triton_kernels import inject_bit_errors_triton
+        from ecc_codecs.triton_kernels import inject_bit_errors_triton
 
         # Simulate KV cache tensor (batch, heads, seq, dim)
         tensor = torch.randn(2, 8, 128, 64, dtype=torch.float16, device="cuda")
@@ -273,7 +273,7 @@ class TestErrorInjectionIntegration:
 
     def test_injection_preserves_tensor_shape(self):
         """Test that error injection preserves original tensor shape."""
-        from hamming74.triton_kernels import inject_bit_errors_triton
+        from ecc_codecs.triton_kernels import inject_bit_errors_triton
 
         shapes = [
             (100,),
@@ -308,7 +308,7 @@ class TestLowBEREffectiveness:
         This was a bug in the original implementation where int() truncation
         would round low BER to zero errors.
         """
-        from hamming74.triton_kernels import inject_bit_errors_triton
+        from ecc_codecs.triton_kernels import inject_bit_errors_triton
 
         # Large tensor to ensure statistical significance
         n_elements = 1_000_000
@@ -333,19 +333,19 @@ class TestVLLMAttentionWithErrors:
 
     def test_class_exists(self):
         """Verify VLLMAttentionWithErrors class is defined."""
-        from evaluation.experiments.vllm_comparison import VLLMAttentionWithErrors
+        from evaluation.experiments.fault_tolerance_benchmark import VLLMAttentionWithErrors
 
         assert VLLMAttentionWithErrors is not None
 
     def test_inherits_from_nn_module(self):
         """Verify VLLMAttentionWithErrors inherits from nn.Module."""
-        from evaluation.experiments.vllm_comparison import VLLMAttentionWithErrors
+        from evaluation.experiments.fault_tolerance_benchmark import VLLMAttentionWithErrors
 
         assert issubclass(VLLMAttentionWithErrors, nn.Module)
 
     def test_is_alias_for_shim(self):
         """Verify VLLMAttentionWithErrors is an alias for FaultInjectionAttentionShim."""
-        from evaluation.experiments.vllm_comparison import (
+        from evaluation.experiments.fault_tolerance_benchmark import (
             VLLMAttentionWithErrors,
             FaultInjectionAttentionShim,
         )
@@ -358,7 +358,7 @@ class TestFaultInjectionConfig:
 
     def test_config_defaults(self):
         """Test that FaultInjectionConfig has correct default values."""
-        from evaluation.experiments.vllm_comparison import FaultInjectionConfig
+        from evaluation.experiments.fault_tolerance_benchmark import FaultInjectionConfig
 
         config = FaultInjectionConfig()
 
@@ -369,7 +369,7 @@ class TestFaultInjectionConfig:
 
     def test_config_custom_values(self):
         """Test that FaultInjectionConfig accepts custom values."""
-        from evaluation.experiments.vllm_comparison import FaultInjectionConfig
+        from evaluation.experiments.fault_tolerance_benchmark import FaultInjectionConfig
 
         config = FaultInjectionConfig(
             ber=1e-3,
@@ -386,7 +386,7 @@ class TestFaultInjectionConfig:
     def test_config_is_dataclass(self):
         """Verify FaultInjectionConfig is a dataclass."""
         from dataclasses import is_dataclass
-        from evaluation.experiments.vllm_comparison import FaultInjectionConfig
+        from evaluation.experiments.fault_tolerance_benchmark import FaultInjectionConfig
 
         assert is_dataclass(FaultInjectionConfig)
 
@@ -396,19 +396,19 @@ class TestFaultInjectionAttentionShim:
 
     def test_class_exists(self):
         """Verify FaultInjectionAttentionShim class is defined."""
-        from evaluation.experiments.vllm_comparison import FaultInjectionAttentionShim
+        from evaluation.experiments.fault_tolerance_benchmark import FaultInjectionAttentionShim
 
         assert FaultInjectionAttentionShim is not None
 
     def test_inherits_from_nn_module(self):
         """Verify FaultInjectionAttentionShim inherits from nn.Module."""
-        from evaluation.experiments.vllm_comparison import FaultInjectionAttentionShim
+        from evaluation.experiments.fault_tolerance_benchmark import FaultInjectionAttentionShim
 
         assert issubclass(FaultInjectionAttentionShim, nn.Module)
 
     def test_requires_projection_layers(self):
         """Test that shim requires q_proj, k_proj, v_proj, o_proj."""
-        from evaluation.experiments.vllm_comparison import (
+        from evaluation.experiments.fault_tolerance_benchmark import (
             FaultInjectionAttentionShim,
             FaultInjectionConfig,
             FaultInjectionStats,
@@ -436,7 +436,7 @@ class TestFaultInjectionAttentionShim:
     @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA not available")
     def test_shim_construction_with_valid_attention(self):
         """Test that shim can be constructed with valid attention module."""
-        from evaluation.experiments.vllm_comparison import (
+        from evaluation.experiments.fault_tolerance_benchmark import (
             FaultInjectionAttentionShim,
             FaultInjectionConfig,
             FaultInjectionStats,
@@ -475,7 +475,7 @@ class TestFaultInjectionAttentionShim:
     @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA not available")
     def test_shim_forward_pass(self):
         """Test that shim forward pass works and injects errors."""
-        from evaluation.experiments.vllm_comparison import (
+        from evaluation.experiments.fault_tolerance_benchmark import (
             FaultInjectionAttentionShim,
             FaultInjectionConfig,
             FaultInjectionStats,
@@ -529,14 +529,14 @@ class TestPatchModelWithFaultInjection:
 
     def test_context_manager_exists(self):
         """Verify patch_model_with_fault_injection function exists."""
-        from evaluation.experiments.vllm_comparison import patch_model_with_fault_injection
+        from evaluation.experiments.fault_tolerance_benchmark import patch_model_with_fault_injection
 
         assert callable(patch_model_with_fault_injection)
 
     @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA not available")
     def test_context_manager_patches_and_restores(self):
         """Test that context manager patches attention and restores on exit."""
-        from evaluation.experiments.vllm_comparison import (
+        from evaluation.experiments.fault_tolerance_benchmark import (
             patch_model_with_fault_injection,
             FaultInjectionConfig,
             FaultInjectionStats,
@@ -585,7 +585,7 @@ class TestPatchModelWithFaultInjection:
 
     def test_context_manager_raises_on_unsupported_model(self):
         """Test that context manager raises on unsupported model architecture."""
-        from evaluation.experiments.vllm_comparison import (
+        from evaluation.experiments.fault_tolerance_benchmark import (
             patch_model_with_fault_injection,
             FaultInjectionConfig,
         )
@@ -609,12 +609,12 @@ class TestHelperFunctions:
 
     def test_find_rotary_embedding_exists(self):
         """Verify _find_rotary_embedding function exists."""
-        from evaluation.experiments.vllm_comparison import _find_rotary_embedding
+        from evaluation.experiments.fault_tolerance_benchmark import _find_rotary_embedding
 
         assert callable(_find_rotary_embedding)
 
     def test_get_vllm_underlying_model_exists(self):
         """Verify _get_vllm_underlying_model function exists."""
-        from evaluation.experiments.vllm_comparison import _get_vllm_underlying_model
+        from evaluation.experiments.fault_tolerance_benchmark import _get_vllm_underlying_model
 
         assert callable(_get_vllm_underlying_model)

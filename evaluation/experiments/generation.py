@@ -50,7 +50,7 @@ def run_generation_demo(
     max_new_tokens=30,
     device="cuda",
 ):
-    from vllm_kernels.shim import (
+    from kv_cache.ecc_shim import (
         ECCShimConfig,
         patch_model_with_ecc_attention,
         reset_ecc_cache,

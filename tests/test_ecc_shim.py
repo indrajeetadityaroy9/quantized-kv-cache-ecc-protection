@@ -6,7 +6,7 @@ import math
 
 class TestSimpleBlockManager:
     def test_initialization(self):
-        from vllm_kernels.shim import SimpleBlockManager
+        from kv_cache.ecc_shim import SimpleBlockManager
 
         manager = SimpleBlockManager(
             num_blocks=64,
@@ -27,7 +27,7 @@ class TestSimpleBlockManager:
         assert manager.k_cache.dtype == torch.uint8
 
     def test_allocation_single_sequence(self):
-        from vllm_kernels.shim import SimpleBlockManager
+        from kv_cache.ecc_shim import SimpleBlockManager
 
         manager = SimpleBlockManager(
             num_blocks=32,
@@ -47,7 +47,7 @@ class TestSimpleBlockManager:
         assert (block_table[3:] == -1).all()
 
     def test_allocation_incremental(self):
-        from vllm_kernels.shim import SimpleBlockManager
+        from kv_cache.ecc_shim import SimpleBlockManager
 
         manager = SimpleBlockManager(
             num_blocks=32,
@@ -65,7 +65,7 @@ class TestSimpleBlockManager:
         assert len(manager.free_blocks) == 29
 
     def test_allocation_multiple_sequences(self):
-        from vllm_kernels.shim import SimpleBlockManager
+        from kv_cache.ecc_shim import SimpleBlockManager
 
         manager = SimpleBlockManager(
             num_blocks=64,
@@ -84,7 +84,7 @@ class TestSimpleBlockManager:
         assert manager.get_context_len(1) == 64
 
     def test_reset_clears_state(self):
-        from vllm_kernels.shim import SimpleBlockManager
+        from kv_cache.ecc_shim import SimpleBlockManager
 
         manager = SimpleBlockManager(
             num_blocks=32,
@@ -107,7 +107,7 @@ class TestSimpleBlockManager:
         assert (manager.block_table == -1).all()
 
     def test_out_of_blocks_raises(self):
-        from vllm_kernels.shim import SimpleBlockManager
+        from kv_cache.ecc_shim import SimpleBlockManager
 
         manager = SimpleBlockManager(
             num_blocks=4,
@@ -124,7 +124,7 @@ class TestSimpleBlockManager:
 
 class TestECCBackend:
     def test_write_stores_data(self):
-        from vllm_kernels.shim import SimpleBlockManager, ECCBackend, ECCShimConfig
+        from kv_cache.ecc_shim import SimpleBlockManager, ECCBackend, ECCShimConfig
 
         manager = SimpleBlockManager(
             num_blocks=16,
@@ -149,7 +149,7 @@ class TestECCBackend:
         assert manager.k_scales.abs().sum() > 0
 
     def test_attend_returns_correct_shape(self):
-        from vllm_kernels.shim import SimpleBlockManager, ECCBackend, ECCShimConfig
+        from kv_cache.ecc_shim import SimpleBlockManager, ECCBackend, ECCShimConfig
 
         manager = SimpleBlockManager(
             num_blocks=16,
@@ -220,7 +220,7 @@ class TestECCPagedAttentionShim:
         return MockRotaryEmb().cuda()
 
     def test_shim_forward_shape(self):
-        from vllm_kernels.shim import (
+        from kv_cache.ecc_shim import (
             SimpleBlockManager,
             ECCBackend,
             ECCShimConfig,
@@ -265,7 +265,7 @@ class TestECCPagedAttentionShim:
         assert attn_weights is None
 
     def test_shim_handles_none_position_ids(self):
-        from vllm_kernels.shim import (
+        from kv_cache.ecc_shim import (
             SimpleBlockManager,
             ECCBackend,
             ECCShimConfig,
@@ -338,7 +338,7 @@ class TestPatchModelWithECCAttention:
         pytest.skip("No LLaMA-compatible model available")
 
     def test_patch_replaces_layers(self, llama_model):
-        from vllm_kernels.shim import (
+        from kv_cache.ecc_shim import (
             patch_model_with_ecc_attention,
             ECCShimConfig,
             ECCPagedAttentionShim,
@@ -363,7 +363,7 @@ class TestPatchModelWithECCAttention:
             ), f"Expected ECCPagedAttentionShim, got {type(patched_attn)}"
 
     def test_patch_restores_on_exit(self, llama_model):
-        from vllm_kernels.shim import patch_model_with_ecc_attention, ECCShimConfig
+        from kv_cache.ecc_shim import patch_model_with_ecc_attention, ECCShimConfig
 
         model, tokenizer, model_name = llama_model
         config = ECCShimConfig(codec="hamming84", ber=0.0)
@@ -388,7 +388,7 @@ class TestPatchModelWithECCAttention:
         ), f"Expected {original_attn_type}, got {type(restored_attn)}"
 
     def test_patch_forward_produces_output(self, llama_model):
-        from vllm_kernels.shim import patch_model_with_ecc_attention, ECCShimConfig
+        from kv_cache.ecc_shim import patch_model_with_ecc_attention, ECCShimConfig
 
         model, tokenizer, model_name = llama_model
         config = ECCShimConfig(codec="hamming84", ber=0.0)
@@ -405,7 +405,7 @@ class TestPatchModelWithECCAttention:
         assert not torch.isnan(outputs.logits).any()
 
     def test_shim_rope_correctness(self, llama_model):
-        from vllm_kernels.shim import (
+        from kv_cache.ecc_shim import (
             patch_model_with_ecc_attention,
             ECCShimConfig,
             reset_ecc_cache,
@@ -445,7 +445,7 @@ class TestPatchModelWithECCAttention:
 
 class TestShimVsBaseline:
     def test_shim_vs_pytorch_attention_mse(self):
-        from vllm_kernels.shim import (
+        from kv_cache.ecc_shim import (
             SimpleBlockManager,
             ECCBackend,
             ECCShimConfig,
@@ -526,7 +526,7 @@ class TestShimVsBaseline:
 
 class TestShimECCCorrection:
     def test_ecc_corrects_single_bit_errors(self):
-        from vllm_kernels.shim import SimpleBlockManager, ECCBackend, ECCShimConfig
+        from kv_cache.ecc_shim import SimpleBlockManager, ECCBackend, ECCShimConfig
 
         torch.manual_seed(42)
 
@@ -562,7 +562,7 @@ class TestShimECCCorrection:
 
 class TestResetECCCache:
     def test_reset_prevents_oom(self):
-        from vllm_kernels.shim import SimpleBlockManager
+        from kv_cache.ecc_shim import SimpleBlockManager
 
         manager = SimpleBlockManager(
             num_blocks=32,
@@ -585,7 +585,7 @@ class TestResetECCCache:
 
 class TestGetECCStats:
     def test_get_stats_returns_dict(self):
-        from vllm_kernels.shim import (
+        from kv_cache.ecc_shim import (
             SimpleBlockManager,
             ECCBackend,
             ECCShimConfig,

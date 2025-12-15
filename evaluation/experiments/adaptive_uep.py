@@ -3,7 +3,7 @@ import math
 import torch
 import torch.nn as nn
 
-from vllm_kernels.shim import (
+from kv_cache.ecc_shim import (
     ECCShimConfig,
     patch_model_with_ecc_attention,
     get_ecc_stats,

@@ -5,11 +5,11 @@ import math
 
 class TestAttentionHamming84:
     def test_single_block_clean_data(self):
-        from vllm_kernels.attention_ecc import (
+        from kv_cache.attention_ecc import (
             paged_attention_ecc,
             reference_attention_ecc,
         )
-        from hamming74.triton_kernels import hamming84_encode
+        from ecc_codecs.triton_kernels import hamming84_encode
 
         batch_size = 1
         num_heads = 2
@@ -116,11 +116,11 @@ class TestAttentionHamming84:
         assert max_diff < 1e-4, f"Max diff {max_diff} exceeds tolerance"
 
     def test_multi_block_clean_data(self):
-        from vllm_kernels.attention_ecc import (
+        from kv_cache.attention_ecc import (
             paged_attention_ecc,
             reference_attention_ecc,
         )
-        from hamming74.triton_kernels import hamming84_encode
+        from ecc_codecs.triton_kernels import hamming84_encode
 
         batch_size = 2
         num_heads = 4
@@ -246,11 +246,11 @@ class TestAttentionHamming84:
         assert max_diff < 1e-4, f"Max diff {max_diff} exceeds tolerance"
 
     def test_varying_context_lengths(self):
-        from vllm_kernels.attention_ecc import (
+        from kv_cache.attention_ecc import (
             paged_attention_ecc,
             reference_attention_ecc,
         )
-        from hamming74.triton_kernels import hamming84_encode
+        from ecc_codecs.triton_kernels import hamming84_encode
 
         batch_size = 3
         num_heads = 2
@@ -380,8 +380,8 @@ class TestAttentionHamming84:
         assert max_diff < 1e-4, f"Max diff {max_diff} exceeds tolerance"
 
     def test_with_injected_errors_corrected(self):
-        from vllm_kernels.attention_ecc import paged_attention_ecc
-        from hamming74.triton_kernels import hamming84_encode, inject_bit_errors_triton
+        from kv_cache.attention_ecc import paged_attention_ecc
+        from ecc_codecs.triton_kernels import hamming84_encode, inject_bit_errors_triton
 
         batch_size = 1
         num_heads = 2
@@ -509,8 +509,8 @@ class TestAttentionHamming84:
 
 class TestOnlineSoftmax:
     def test_softmax_matches_pytorch(self):
-        from vllm_kernels.attention_ecc import paged_attention_ecc
-        from hamming74.triton_kernels import hamming84_encode
+        from kv_cache.attention_ecc import paged_attention_ecc
+        from ecc_codecs.triton_kernels import hamming84_encode
 
         batch_size = 1
         num_heads = 1
@@ -596,7 +596,7 @@ class TestOnlineSoftmax:
 
 class TestEdgeCases:
     def test_empty_context(self):
-        from vllm_kernels.attention_ecc import paged_attention_ecc
+        from kv_cache.attention_ecc import paged_attention_ecc
 
         batch_size = 1
         num_heads = 2
@@ -656,11 +656,11 @@ class TestEdgeCases:
         assert output.shape == query.shape
 
     def test_single_token_context(self):
-        from vllm_kernels.attention_ecc import (
+        from kv_cache.attention_ecc import (
             paged_attention_ecc,
             reference_attention_ecc,
         )
-        from hamming74.triton_kernels import hamming84_encode
+        from ecc_codecs.triton_kernels import hamming84_encode
 
         batch_size = 1
         num_heads = 2
@@ -757,11 +757,11 @@ class TestEdgeCases:
         assert max_diff < 1e-4, f"Max diff {max_diff} exceeds tolerance"
 
     def test_large_head_dim(self):
-        from vllm_kernels.attention_ecc import (
+        from kv_cache.attention_ecc import (
             paged_attention_ecc,
             reference_attention_ecc,
         )
-        from hamming74.triton_kernels import hamming84_encode
+        from ecc_codecs.triton_kernels import hamming84_encode
 
         batch_size = 1
         num_heads = 2
@@ -872,8 +872,8 @@ class TestEdgeCases:
 
 class TestAttentionGolay:
     def test_golay_reference_roundtrip(self):
-        from vllm_kernels.attention_ecc import paged_attention_ecc
-        from hamming74.triton_kernels import golay_encode
+        from kv_cache.attention_ecc import paged_attention_ecc
+        from ecc_codecs.triton_kernels import golay_encode
 
         batch_size = 1
         num_heads = 2
@@ -1001,8 +1001,8 @@ class TestAttentionGolay:
         assert torch.isfinite(output).all()
 
     def test_golay_non_divisible_head_dim(self):
-        from vllm_kernels.attention_ecc import paged_attention_ecc
-        from hamming74.triton_kernels import golay_encode
+        from kv_cache.attention_ecc import paged_attention_ecc
+        from ecc_codecs.triton_kernels import golay_encode
 
         batch_size = 1
         num_heads = 2
@@ -1120,8 +1120,8 @@ class TestAttentionGolay:
 
 class TestAdaptiveUEP:
     def test_adaptive_uep_basic(self):
-        from vllm_kernels.attention_ecc import paged_attention_ecc_adaptive
-        from hamming74.triton_kernels import hamming84_encode, golay_encode
+        from kv_cache.attention_ecc import paged_attention_ecc_adaptive
+        from ecc_codecs.triton_kernels import hamming84_encode, golay_encode
 
         batch_size = 1
         num_heads = 2
@@ -1293,8 +1293,8 @@ class TestAdaptiveUEP:
         assert torch.isfinite(output).all()
 
     def test_adaptive_uep_sink_only(self):
-        from vllm_kernels.attention_ecc import paged_attention_ecc_adaptive
-        from hamming74.triton_kernels import hamming84_encode, golay_encode
+        from kv_cache.attention_ecc import paged_attention_ecc_adaptive
+        from ecc_codecs.triton_kernels import hamming84_encode, golay_encode
 
         batch_size = 1
         num_heads = 2
@@ -1443,11 +1443,11 @@ class TestAdaptiveUEP:
         assert torch.isfinite(output).all()
 
     def test_adaptive_uep_no_sink(self):
-        from vllm_kernels.attention_ecc import (
+        from kv_cache.attention_ecc import (
             paged_attention_ecc_adaptive,
             paged_attention_ecc,
         )
-        from hamming74.triton_kernels import hamming84_encode
+        from ecc_codecs.triton_kernels import hamming84_encode
 
         batch_size = 1
         num_heads = 2

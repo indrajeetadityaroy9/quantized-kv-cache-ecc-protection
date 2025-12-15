@@ -183,7 +183,7 @@ class FaultInjectionAttentionShim(nn.Module):
         original_dtype = tensor.dtype
 
         try:
-            from hamming74.triton_kernels import inject_bit_errors_triton
+            from ecc_codecs.triton_kernels import inject_bit_errors_triton
 
             # Convert tensor to contiguous byte representation
             # This avoids issues with view chains on non-contiguous tensors
@@ -301,7 +301,7 @@ def _find_rotary_embedding(model, layers):
     """
     Find or create rotary embedding for the model.
 
-    Mirrors the logic from vllm_kernels/shim.py _find_rotary_embedding().
+    Mirrors the logic from kv_cache/shim.py _find_rotary_embedding().
     """
     # Try to find existing rotary embedding
     search_paths = [
@@ -677,7 +677,7 @@ class VLLMWithFaultInjection:
 
         # Try Triton kernel first
         try:
-            from hamming74.triton_kernels import inject_bit_errors_triton
+            from ecc_codecs.triton_kernels import inject_bit_errors_triton
 
             # Work with appropriate integer view for the dtype
             flat_tensor = tensor.flatten()
@@ -1198,7 +1198,7 @@ def run_ecc_throughput(config, codec="hamming84", batch_size=1, seq_length=512):
     from transformers import AutoModelForCausalLM, AutoTokenizer
 
     try:
-        from vllm_kernels.shim import (
+        from kv_cache.ecc_shim import (
             ECCShimConfig,
             patch_model_with_ecc_attention,
             reset_ecc_cache,
@@ -1502,7 +1502,7 @@ def compute_unprotected_perplexity_with_ber(config, ber=0.0):
     from transformers import AutoModelForCausalLM, AutoTokenizer
 
     try:
-        from vllm_kernels.unprotected_shim import (
+        from kv_cache.unprotected_shim import (
             UnprotectedShimConfig,
             patch_model_with_unprotected_attention,
             reset_unprotected_cache,
@@ -1582,7 +1582,7 @@ def compute_ecc_perplexity_with_ber(config, codec="hamming84", ber=0.0):
     from transformers import AutoModelForCausalLM, AutoTokenizer
 
     try:
-        from vllm_kernels.shim import (
+        from kv_cache.ecc_shim import (
             ECCShimConfig,
             patch_model_with_ecc_attention,
             reset_ecc_cache,
@@ -1819,7 +1819,7 @@ def compute_ecc_perplexity(config, codec="hamming84"):
     from transformers import AutoModelForCausalLM, AutoTokenizer
 
     try:
-        from vllm_kernels.shim import (
+        from kv_cache.ecc_shim import (
             ECCShimConfig,
             patch_model_with_ecc_attention,
             reset_ecc_cache,

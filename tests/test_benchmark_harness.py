@@ -4,7 +4,7 @@ import torch
 
 class TestAttentionBenchmarkResult:
     def test_dataclass_fields(self):
-        from vllm_kernels.benchmark_harness import AttentionBenchmarkResult
+        from kv_cache.benchmark_harness import AttentionBenchmarkResult
 
         result = AttentionBenchmarkResult(
             name="test",
@@ -31,7 +31,7 @@ class TestAttentionBenchmarkResult:
 
 class TestRandomizedBlockTable:
     def test_randomized_block_table_shape(self):
-        from vllm_kernels.benchmark_harness import _create_randomized_block_table
+        from kv_cache.benchmark_harness import _create_randomized_block_table
 
         batch_size = 4
         num_blocks_per_seq = 8
@@ -46,7 +46,7 @@ class TestRandomizedBlockTable:
         assert block_table.device.type == "cuda"
 
     def test_randomized_block_table_values(self):
-        from vllm_kernels.benchmark_harness import _create_randomized_block_table
+        from kv_cache.benchmark_harness import _create_randomized_block_table
 
         batch_size = 2
         num_blocks_per_seq = 5
@@ -64,7 +64,7 @@ class TestRandomizedBlockTable:
             assert len(batch_blocks) == len(set(batch_blocks)), "Duplicate blocks found"
 
     def test_randomized_block_table_is_different_per_batch(self):
-        from vllm_kernels.benchmark_harness import _create_randomized_block_table
+        from kv_cache.benchmark_harness import _create_randomized_block_table
 
         batch_size = 4
         num_blocks_per_seq = 10
@@ -86,7 +86,7 @@ class TestRandomizedBlockTable:
 
 class TestBenchmarkAttentionBaseline:
     def test_benchmark_attention_baseline_returns_result(self):
-        from vllm_kernels.benchmark_harness import benchmark_attention_baseline
+        from kv_cache.benchmark_harness import benchmark_attention_baseline
 
         result = benchmark_attention_baseline(
             batch_size=1,
@@ -107,7 +107,7 @@ class TestBenchmarkAttentionBaseline:
         assert result.overhead_vs_baseline == 1.0
 
     def test_benchmark_attention_baseline_latency_scales_with_seq_len(self):
-        from vllm_kernels.benchmark_harness import benchmark_attention_baseline
+        from kv_cache.benchmark_harness import benchmark_attention_baseline
 
         short_result = benchmark_attention_baseline(
             batch_size=1,
@@ -134,7 +134,7 @@ class TestBenchmarkAttentionBaseline:
 
 class TestBenchmarkAttentionECCHamming84:
     def test_benchmark_attention_ecc_hamming84_returns_result(self):
-        from vllm_kernels.benchmark_harness import benchmark_attention_ecc_hamming84
+        from kv_cache.benchmark_harness import benchmark_attention_ecc_hamming84
 
         result = benchmark_attention_ecc_hamming84(
             batch_size=1,
@@ -156,7 +156,7 @@ class TestBenchmarkAttentionECCHamming84:
         assert result.extra["codec"] == "hamming84"
 
     def test_benchmark_attention_ecc_hamming84_overhead_computed(self):
-        from vllm_kernels.benchmark_harness import benchmark_attention_ecc_hamming84
+        from kv_cache.benchmark_harness import benchmark_attention_ecc_hamming84
 
         result = benchmark_attention_ecc_hamming84(
             batch_size=1,
@@ -172,7 +172,7 @@ class TestBenchmarkAttentionECCHamming84:
         assert result.overhead_vs_baseline > 0
 
     def test_benchmark_attention_ecc_hamming84_no_overhead_without_baseline(self):
-        from vllm_kernels.benchmark_harness import benchmark_attention_ecc_hamming84
+        from kv_cache.benchmark_harness import benchmark_attention_ecc_hamming84
 
         result = benchmark_attention_ecc_hamming84(
             batch_size=1,
@@ -189,7 +189,7 @@ class TestBenchmarkAttentionECCHamming84:
 
 class TestBenchmarkAttentionECCAdaptive:
     def test_benchmark_attention_ecc_adaptive_returns_result(self):
-        from vllm_kernels.benchmark_harness import benchmark_attention_ecc_adaptive
+        from kv_cache.benchmark_harness import benchmark_attention_ecc_adaptive
 
         result = benchmark_attention_ecc_adaptive(
             batch_size=1,
@@ -213,7 +213,7 @@ class TestBenchmarkAttentionECCAdaptive:
 class TestAttentionResultsToJson:
     def test_attention_results_to_json(self):
         import json
-        from vllm_kernels.benchmark_harness import (
+        from kv_cache.benchmark_harness import (
             AttentionBenchmarkResult,
             attention_results_to_json,
         )
@@ -253,7 +253,7 @@ class TestAttentionResultsToJson:
 
 class TestPrepareECCCacheHamming84:
     def test_prepare_ecc_cache_hamming84_shapes(self):
-        from vllm_kernels.benchmark_harness import (
+        from kv_cache.benchmark_harness import (
             _create_randomized_block_table,
             _prepare_ecc_cache_hamming84,
         )
@@ -301,8 +301,8 @@ class TestPrepareECCCacheHamming84:
         assert scales.dtype == torch.float32
 
     def test_prepare_ecc_cache_hamming84_valid_encoded_data(self):
-        from hamming74.triton_kernels import hamming84_decode
-        from vllm_kernels.benchmark_harness import (
+        from ecc_codecs.triton_kernels import hamming84_decode
+        from kv_cache.benchmark_harness import (
             _create_randomized_block_table,
             _prepare_ecc_cache_hamming84,
         )
@@ -342,7 +342,7 @@ class TestPrepareECCCacheHamming84:
 
 class TestRunAttentionBenchmarkSuite:
     def test_run_attention_benchmark_suite_minimal(self):
-        from vllm_kernels.benchmark_harness import run_attention_benchmark_suite
+        from kv_cache.benchmark_harness import run_attention_benchmark_suite
 
         results = run_attention_benchmark_suite(
             batch_sizes=[1],

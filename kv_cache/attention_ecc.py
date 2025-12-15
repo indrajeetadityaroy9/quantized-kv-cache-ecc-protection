@@ -3,9 +3,9 @@ import triton
 import triton.language as tl
 import math
 
-from hamming74.triton_kernels import hamming84_decode, golay_decode, hamming84_encode
-from hamming74.triton_kernels.config import SYNDROME_LUT_HAMMING84
-from hamming74.triton_kernels.golay_triton import _H_ROW_MASKS, _build_syndrome_table
+from ecc_codecs.triton_kernels import hamming84_decode, golay_decode, hamming84_encode
+from ecc_codecs.triton_kernels.config import SYNDROME_LUT_HAMMING84
+from ecc_codecs.triton_kernels.golay_triton import _H_ROW_MASKS, _build_syndrome_table
 
 
 @triton.jit

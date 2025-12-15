@@ -2,8 +2,8 @@ import torch
 import triton
 import triton.language as tl
 
-from hamming74.triton_kernels import hamming84_encode, golay_encode, hamming84_decode
-from hamming74.triton_kernels.config import (
+from ecc_codecs.triton_kernels import hamming84_encode, golay_encode, hamming84_decode
+from ecc_codecs.triton_kernels.config import (
     HAMMING84_BLOCK_SIZE,
     GOLAY_BLOCK_SIZE,
 )

@@ -5,15 +5,15 @@ import torch
 import torch.nn.functional as F
 from dataclasses import dataclass
 
-from hamming74 import Hamming84
-from hamming74.triton_kernels import (
+from ecc_codecs import Hamming84
+from ecc_codecs.triton_kernels import (
     golay_decode,
     golay_encode,
     hamming84_decode,
     hamming84_encode,
     inject_bit_errors_triton,
 )
-from vllm_kernels.attention_ecc import (
+from kv_cache.attention_ecc import (
     paged_attention_ecc,
     paged_attention_ecc_adaptive,
 )

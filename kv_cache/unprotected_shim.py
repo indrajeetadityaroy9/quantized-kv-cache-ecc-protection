@@ -20,13 +20,13 @@ import torch.nn.functional as F
 from contextlib import contextmanager
 import math
 
-from vllm_kernels.paged_cache_ecc import compute_quantization_scales
-from vllm_kernels.shim import (
+from kv_cache.paged_cache_ecc import compute_quantization_scales
+from kv_cache.ecc_shim import (
     SimpleBlockManager,
     _get_attention_params,
     _find_rotary_embedding,
 )
-from hamming74.triton_kernels import inject_bit_errors_triton
+from ecc_codecs.triton_kernels import inject_bit_errors_triton
 
 
 class UnprotectedDummyCache:

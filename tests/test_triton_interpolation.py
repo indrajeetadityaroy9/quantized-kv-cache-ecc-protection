@@ -4,10 +4,10 @@ import torch
 
 class TestTritonInterpolation:
     def test_no_double_errors_unchanged(self):
-        from hamming74.triton_kernels.interpolation_triton import (
+        from ecc_codecs.triton_kernels.interpolation_triton import (
             interpolate_double_errors,
         )
-        from hamming74.triton_kernels.config import ErrorType
+        from ecc_codecs.triton_kernels.config import ErrorType
 
         q = torch.tensor([1, 5, 10, 15, 8], dtype=torch.uint8, device="cuda")
         err = torch.zeros_like(q)
@@ -17,10 +17,10 @@ class TestTritonInterpolation:
         assert torch.equal(result, q), "No-error case should return exact copy"
 
     def test_single_double_error_middle(self):
-        from hamming74.triton_kernels.interpolation_triton import (
+        from ecc_codecs.triton_kernels.interpolation_triton import (
             interpolate_double_errors,
         )
-        from hamming74.triton_kernels.config import ErrorType
+        from ecc_codecs.triton_kernels.config import ErrorType
 
         q = torch.tensor([4, 8, 12, 8, 4], dtype=torch.uint8, device="cuda")
         err = torch.tensor(
@@ -35,10 +35,10 @@ class TestTritonInterpolation:
         ), f"Middle interpolation failed: {result} vs {expected}"
 
     def test_double_error_first_position(self):
-        from hamming74.triton_kernels.interpolation_triton import (
+        from ecc_codecs.triton_kernels.interpolation_triton import (
             interpolate_double_errors,
         )
-        from hamming74.triton_kernels.config import ErrorType
+        from ecc_codecs.triton_kernels.config import ErrorType
 
         q = torch.tensor([15, 4, 8, 12], dtype=torch.uint8, device="cuda")
         err = torch.tensor(
@@ -53,10 +53,10 @@ class TestTritonInterpolation:
         ), f"Left boundary failed: {result} vs {expected}"
 
     def test_double_error_last_position(self):
-        from hamming74.triton_kernels.interpolation_triton import (
+        from ecc_codecs.triton_kernels.interpolation_triton import (
             interpolate_double_errors,
         )
-        from hamming74.triton_kernels.config import ErrorType
+        from ecc_codecs.triton_kernels.config import ErrorType
 
         q = torch.tensor([4, 8, 12, 15], dtype=torch.uint8, device="cuda")
         err = torch.tensor(
@@ -71,10 +71,10 @@ class TestTritonInterpolation:
         ), f"Right boundary failed: {result} vs {expected}"
 
     def test_multiple_scattered_double_errors(self):
-        from hamming74.triton_kernels.interpolation_triton import (
+        from ecc_codecs.triton_kernels.interpolation_triton import (
             interpolate_double_errors,
         )
-        from hamming74.triton_kernels.config import ErrorType
+        from ecc_codecs.triton_kernels.config import ErrorType
 
         q = torch.tensor([0, 4, 8, 12, 8, 4, 0], dtype=torch.uint8, device="cuda")
         err = torch.tensor(
@@ -99,10 +99,10 @@ class TestTritonInterpolation:
         ), f"Scattered errors failed: {result} vs {expected}"
 
     def test_consecutive_double_errors(self):
-        from hamming74.triton_kernels.interpolation_triton import (
+        from ecc_codecs.triton_kernels.interpolation_triton import (
             interpolate_double_errors,
         )
-        from hamming74.triton_kernels.config import ErrorType
+        from ecc_codecs.triton_kernels.config import ErrorType
 
         q = torch.tensor([4, 0, 0, 0, 4], dtype=torch.uint8, device="cuda")
         err = torch.tensor(
@@ -125,10 +125,10 @@ class TestTritonInterpolation:
         ), f"Consecutive errors failed: {result} vs {expected}"
 
     def test_large_tensor_non_double_unchanged(self):
-        from hamming74.triton_kernels.interpolation_triton import (
+        from ecc_codecs.triton_kernels.interpolation_triton import (
             interpolate_double_errors,
         )
-        from hamming74.triton_kernels.config import ErrorType
+        from ecc_codecs.triton_kernels.config import ErrorType
 
         N = 100000
         q = torch.randint(0, 16, (N,), dtype=torch.uint8, device="cuda")
@@ -145,10 +145,10 @@ class TestTritonInterpolation:
         ), "Non-double positions should be unchanged"
 
     def test_output_in_valid_range(self):
-        from hamming74.triton_kernels.interpolation_triton import (
+        from ecc_codecs.triton_kernels.interpolation_triton import (
             interpolate_double_errors,
         )
-        from hamming74.triton_kernels.config import ErrorType
+        from ecc_codecs.triton_kernels.config import ErrorType
 
         N = 100000
         q = torch.randint(0, 16, (N,), dtype=torch.uint8, device="cuda")
@@ -164,10 +164,10 @@ class TestTritonInterpolation:
 
 class TestTritonInterpolation2D:
     def test_2d_shape_preserved(self):
-        from hamming74.triton_kernels.interpolation_triton import (
+        from ecc_codecs.triton_kernels.interpolation_triton import (
             interpolate_double_errors,
         )
-        from hamming74.triton_kernels.config import ErrorType
+        from ecc_codecs.triton_kernels.config import ErrorType
 
         q = torch.randint(0, 16, (32, 1024), dtype=torch.uint8, device="cuda")
         err = torch.zeros_like(q)
@@ -178,10 +178,10 @@ class TestTritonInterpolation2D:
         assert result.shape == q.shape, "Shape should be preserved"
 
     def test_2d_non_double_unchanged(self):
-        from hamming74.triton_kernels.interpolation_triton import (
+        from ecc_codecs.triton_kernels.interpolation_triton import (
             interpolate_double_errors,
         )
-        from hamming74.triton_kernels.config import ErrorType
+        from ecc_codecs.triton_kernels.config import ErrorType
 
         q = torch.randint(0, 16, (32, 1024), dtype=torch.uint8, device="cuda")
         err = torch.zeros_like(q)
@@ -195,10 +195,10 @@ class TestTritonInterpolation2D:
         ), "Non-double positions should be unchanged (2D)"
 
     def test_2d_batch_independent(self):
-        from hamming74.triton_kernels.interpolation_triton import (
+        from ecc_codecs.triton_kernels.interpolation_triton import (
             interpolate_double_errors,
         )
-        from hamming74.triton_kernels.config import ErrorType
+        from ecc_codecs.triton_kernels.config import ErrorType
 
         q = torch.tensor(
             [
@@ -234,7 +234,7 @@ class TestTritonInterpolation2D:
 
 class TestTritonInterpolationPerformance:
     def test_handles_empty_tensor(self):
-        from hamming74.triton_kernels.interpolation_triton import (
+        from ecc_codecs.triton_kernels.interpolation_triton import (
             interpolate_double_errors,
         )
 
@@ -246,10 +246,10 @@ class TestTritonInterpolationPerformance:
         assert result.numel() == 0
 
     def test_handles_single_element(self):
-        from hamming74.triton_kernels.interpolation_triton import (
+        from ecc_codecs.triton_kernels.interpolation_triton import (
             interpolate_double_errors,
         )
-        from hamming74.triton_kernels.config import ErrorType
+        from ecc_codecs.triton_kernels.config import ErrorType
 
         single_q = torch.tensor([8], dtype=torch.uint8, device="cuda")
         single_err = torch.tensor(
@@ -261,10 +261,10 @@ class TestTritonInterpolationPerformance:
         assert result.item() == 8
 
     def test_early_exit_no_double_errors(self):
-        from hamming74.triton_kernels.interpolation_triton import (
+        from ecc_codecs.triton_kernels.interpolation_triton import (
             interpolate_double_errors,
         )
-        from hamming74.triton_kernels.config import ErrorType
+        from ecc_codecs.triton_kernels.config import ErrorType
 
         q = torch.randint(0, 16, (1000000,), dtype=torch.uint8, device="cuda")
         err = torch.zeros_like(q)
@@ -275,10 +275,10 @@ class TestTritonInterpolationPerformance:
 
     @pytest.mark.parametrize("size", [1, 100, 1024, 10000, 100000])
     def test_various_sizes(self, size):
-        from hamming74.triton_kernels.interpolation_triton import (
+        from ecc_codecs.triton_kernels.interpolation_triton import (
             interpolate_double_errors,
         )
-        from hamming74.triton_kernels.config import ErrorType
+        from ecc_codecs.triton_kernels.config import ErrorType
 
         q = torch.randint(0, 16, (size,), dtype=torch.uint8, device="cuda")
         err = torch.zeros(size, dtype=torch.uint8, device="cuda")
@@ -294,14 +294,14 @@ class TestTritonInterpolationPerformance:
 
 class TestTritonInterpolationWithHamming84:
     def test_end_to_end_with_double_errors(self):
-        from hamming74.triton_kernels.hamming84_triton import (
+        from ecc_codecs.triton_kernels.hamming84_triton import (
             hamming84_encode,
             hamming84_decode,
         )
-        from hamming74.triton_kernels.interpolation_triton import (
+        from ecc_codecs.triton_kernels.interpolation_triton import (
             interpolate_double_errors,
         )
-        from hamming74.triton_kernels.config import ErrorType
+        from ecc_codecs.triton_kernels.config import ErrorType
 
         original = torch.tensor([5, 10, 5], dtype=torch.uint8, device="cuda")
         encoded = hamming84_encode(original)
@@ -322,14 +322,14 @@ class TestTritonInterpolationWithHamming84:
         assert result[2].item() == 5
 
     def test_large_scale_with_injected_double_errors(self):
-        from hamming74.triton_kernels.hamming84_triton import (
+        from ecc_codecs.triton_kernels.hamming84_triton import (
             hamming84_encode,
             hamming84_decode,
         )
-        from hamming74.triton_kernels.interpolation_triton import (
+        from ecc_codecs.triton_kernels.interpolation_triton import (
             interpolate_double_errors,
         )
-        from hamming74.triton_kernels.config import ErrorType
+        from ecc_codecs.triton_kernels.config import ErrorType
 
         N = 10000
         original = torch.randint(0, 16, (N,), dtype=torch.uint8, device="cuda")

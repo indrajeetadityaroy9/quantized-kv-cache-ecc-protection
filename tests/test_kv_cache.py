@@ -4,7 +4,7 @@ import torch
 
 class TestMemoryLayout:
     def test_ecc_cache_config_hamming84(self):
-        from vllm_kernels.memory_layout import ECCCacheConfig
+        from kv_cache.memory_layout import ECCCacheConfig
 
         config = ECCCacheConfig(
             num_heads=32,
@@ -21,7 +21,7 @@ class TestMemoryLayout:
         assert config.storage_overhead == 2.0
 
     def test_ecc_cache_config_golay(self):
-        from vllm_kernels.memory_layout import ECCCacheConfig
+        from kv_cache.memory_layout import ECCCacheConfig
 
         config = ECCCacheConfig(
             num_heads=32,
@@ -39,7 +39,7 @@ class TestMemoryLayout:
         assert config.storage_overhead == pytest.approx(32 / 12, rel=0.01)
 
     def test_allocate_ecc_kv_cache(self):
-        from vllm_kernels.memory_layout import ECCCacheConfig, allocate_ecc_kv_cache
+        from kv_cache.memory_layout import ECCCacheConfig, allocate_ecc_kv_cache
 
         config = ECCCacheConfig(
             num_heads=8,
@@ -59,7 +59,7 @@ class TestMemoryLayout:
         assert key_cache.device.type == "cuda"
 
     def test_create_block_table(self):
-        from vllm_kernels.memory_layout import create_block_table
+        from kv_cache.memory_layout import create_block_table
 
         batch_size = 4
         max_seq_len = 512
@@ -75,7 +75,7 @@ class TestMemoryLayout:
         assert (block_table == -1).all()
 
     def test_allocate_blocks(self):
-        from vllm_kernels.memory_layout import create_block_table, allocate_blocks
+        from kv_cache.memory_layout import create_block_table, allocate_blocks
 
         batch_size = 2
         max_seq_len = 256
@@ -100,7 +100,7 @@ class TestMemoryLayout:
         assert (block_table[0, 5:] == -1).all()
 
     def test_compute_slot_mapping(self):
-        from vllm_kernels.memory_layout import (
+        from kv_cache.memory_layout import (
             create_block_table,
             allocate_blocks,
             compute_slot_mapping,
@@ -126,7 +126,7 @@ class TestMemoryLayout:
         assert slot_mapping[16, 1].item() == 0
 
     def test_get_codec_for_block(self):
-        from vllm_kernels.memory_layout import get_codec_for_block
+        from kv_cache.memory_layout import get_codec_for_block
 
         for i in range(4):
             assert get_codec_for_block(i, sink_blocks=4) == "golay"
@@ -137,7 +137,7 @@ class TestMemoryLayout:
 
 class TestCacheWrite:
     def test_compute_quantization_scales(self):
-        from vllm_kernels.paged_cache_ecc import compute_quantization_scales
+        from kv_cache.paged_cache_ecc import compute_quantization_scales
 
         tensor = torch.tensor(
             [
@@ -156,7 +156,7 @@ class TestCacheWrite:
         assert scales[1].item() == pytest.approx(0.5 / 7, rel=0.01)
 
     def test_write_kv_simple_hamming84(self):
-        from vllm_kernels.paged_cache_ecc import write_kv_to_cache_simple
+        from kv_cache.paged_cache_ecc import write_kv_to_cache_simple
 
         batch_size = 2
         seq_len = 32
@@ -173,11 +173,11 @@ class TestCacheWrite:
         assert scales.shape == (batch_size, seq_len)
 
     def test_write_kv_roundtrip_hamming84(self):
-        from vllm_kernels.paged_cache_ecc import (
+        from kv_cache.paged_cache_ecc import (
             write_kv_to_cache_simple,
             compute_quantization_scales,
         )
-        from hamming74.triton_kernels import hamming84_decode
+        from ecc_codecs.triton_kernels import hamming84_decode
 
         batch_size = 2
         seq_len = 16
@@ -201,7 +201,7 @@ class TestCacheWrite:
 
 class TestBenchmarkHarness:
     def test_cuda_timer(self):
-        from vllm_kernels.benchmark_harness import cuda_timer
+        from kv_cache.benchmark_harness import cuda_timer
 
         data = torch.randn(1000, device="cuda")
 
@@ -211,7 +211,7 @@ class TestBenchmarkHarness:
         assert latency < 1000
 
     def test_benchmark_hamming84_encode(self):
-        from vllm_kernels.benchmark_harness import benchmark_hamming84_encode
+        from kv_cache.benchmark_harness import benchmark_hamming84_encode
 
         result = benchmark_hamming84_encode(n_elements=10_000, warmup=5, repeat=20)
 
@@ -221,7 +221,7 @@ class TestBenchmarkHarness:
         assert result.throughput_mvals_sec > 0
 
     def test_benchmark_golay_encode(self):
-        from vllm_kernels.benchmark_harness import benchmark_golay_encode
+        from kv_cache.benchmark_harness import benchmark_golay_encode
 
         result = benchmark_golay_encode(n_triplets=3_333, warmup=5, repeat=20)
 
@@ -230,7 +230,7 @@ class TestBenchmarkHarness:
         assert result.throughput_mvals_sec > 0
 
     def test_benchmark_fault_injection(self):
-        from vllm_kernels.benchmark_harness import benchmark_fault_injection
+        from kv_cache.benchmark_harness import benchmark_fault_injection
 
         result = benchmark_fault_injection(
             n_elements=10_000, ber=0.05, warmup=5, repeat=20
@@ -240,7 +240,7 @@ class TestBenchmarkHarness:
         assert result.extra["ber"] == 0.05
 
     def test_benchmark_encode_inject_decode_pipeline(self):
-        from vllm_kernels.benchmark_harness import benchmark_encode_inject_decode
+        from kv_cache.benchmark_harness import benchmark_encode_inject_decode
 
         result = benchmark_encode_inject_decode(
             codec="hamming84", n_elements=10_000, ber=0.01, warmup=5, repeat=20
@@ -252,7 +252,7 @@ class TestBenchmarkHarness:
 
 class TestIntegration:
     def test_full_ecc_pipeline_hamming84(self):
-        from hamming74.triton_kernels import (
+        from ecc_codecs.triton_kernels import (
             hamming84_encode,
             hamming84_decode,
             inject_bit_errors_triton,
@@ -273,7 +273,7 @@ class TestIntegration:
         assert accuracy > 0.99, f"Accuracy too low: {accuracy}"
 
     def test_full_ecc_pipeline_golay(self):
-        from hamming74.triton_kernels import (
+        from ecc_codecs.triton_kernels import (
             golay_encode,
             golay_decode,
             inject_bit_errors_triton,

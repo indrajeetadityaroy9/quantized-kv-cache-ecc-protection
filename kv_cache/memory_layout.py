@@ -1,5 +1,5 @@
 import torch
-from hamming74.triton_kernels.config import get_physical_dtype
+from ecc_codecs.triton_kernels.config import get_physical_dtype
 
 
 class ECCCacheConfig:

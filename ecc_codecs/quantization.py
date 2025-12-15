@@ -22,7 +22,7 @@ Example:
     q, scales = quantizer.quantize(x, mode="key")  # Per-channel for keys
 
     # Or use backends directly
-    from hamming74.quantization_backends import get_quantizer, QuantizationMode
+    from ecc_codecs.quantization_backends import get_quantizer, QuantizationMode
     kivi = get_quantizer("kivi")
     q_keys = kivi.quantize(keys, QuantizationMode.KEY)
 """

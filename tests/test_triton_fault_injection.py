@@ -4,7 +4,7 @@ import torch
 
 class TestTritonFaultInjectionBERFidelity:
     def test_zero_ber_no_errors(self):
-        from hamming74.triton_kernels.fault_injection_triton import (
+        from ecc_codecs.triton_kernels.fault_injection_triton import (
             inject_bit_errors_triton,
         )
 
@@ -18,7 +18,7 @@ class TestTritonFaultInjectionBERFidelity:
 
     @pytest.mark.parametrize("target_ber", [0.01, 0.05, 0.10, 0.20])
     def test_ber_fidelity_uint8(self, target_ber):
-        from hamming74.triton_kernels.fault_injection_triton import (
+        from ecc_codecs.triton_kernels.fault_injection_triton import (
             inject_bit_errors_triton,
         )
 
@@ -41,7 +41,7 @@ class TestTritonFaultInjectionBERFidelity:
 
     @pytest.mark.parametrize("target_ber", [0.01, 0.05, 0.10])
     def test_ber_fidelity_int32_24bit(self, target_ber):
-        from hamming74.triton_kernels.fault_injection_triton import (
+        from ecc_codecs.triton_kernels.fault_injection_triton import (
             inject_bit_errors_triton,
         )
 
@@ -65,7 +65,7 @@ class TestTritonFaultInjectionBERFidelity:
 
 class TestTritonFaultInjectionDeterminism:
     def test_same_seed_same_result_uint8(self):
-        from hamming74.triton_kernels.fault_injection_triton import (
+        from ecc_codecs.triton_kernels.fault_injection_triton import (
             inject_bit_errors_triton,
         )
 
@@ -79,7 +79,7 @@ class TestTritonFaultInjectionDeterminism:
         ), "Same seed should produce same errors"
 
     def test_same_seed_same_result_int32(self):
-        from hamming74.triton_kernels.fault_injection_triton import (
+        from ecc_codecs.triton_kernels.fault_injection_triton import (
             inject_bit_errors_triton,
         )
 
@@ -93,7 +93,7 @@ class TestTritonFaultInjectionDeterminism:
         ), "Same seed should produce same errors"
 
     def test_different_seed_different_result(self):
-        from hamming74.triton_kernels.fault_injection_triton import (
+        from ecc_codecs.triton_kernels.fault_injection_triton import (
             inject_bit_errors_triton,
         )
 
@@ -109,7 +109,7 @@ class TestTritonFaultInjectionDeterminism:
 
 class TestTritonFaultInjectionCorrectness:
     def test_only_active_bits_affected(self):
-        from hamming74.triton_kernels.fault_injection_triton import (
+        from ecc_codecs.triton_kernels.fault_injection_triton import (
             inject_bit_errors_triton,
         )
 
@@ -123,7 +123,7 @@ class TestTritonFaultInjectionCorrectness:
         assert high_bits_unchanged.all(), "Bits outside n_bits should not be affected"
 
     def test_xor_relationship(self):
-        from hamming74.triton_kernels.fault_injection_triton import (
+        from ecc_codecs.triton_kernels.fault_injection_triton import (
             inject_bit_errors_triton,
         )
 
@@ -139,7 +139,7 @@ class TestTritonFaultInjectionCorrectness:
 class TestTritonFaultInjectionVariousSizes:
     @pytest.mark.parametrize("size", [1, 100, 1024, 10000, 100000])
     def test_various_sizes_uint8(self, size):
-        from hamming74.triton_kernels.fault_injection_triton import (
+        from ecc_codecs.triton_kernels.fault_injection_triton import (
             inject_bit_errors_triton,
         )
 
@@ -151,7 +151,7 @@ class TestTritonFaultInjectionVariousSizes:
 
     @pytest.mark.parametrize("size", [1, 100, 1024, 10000])
     def test_various_sizes_int32(self, size):
-        from hamming74.triton_kernels.fault_injection_triton import (
+        from ecc_codecs.triton_kernels.fault_injection_triton import (
             inject_bit_errors_triton,
         )
 
@@ -162,7 +162,7 @@ class TestTritonFaultInjectionVariousSizes:
         assert corrupted.dtype == data.dtype
 
     def test_empty_tensor(self):
-        from hamming74.triton_kernels.fault_injection_triton import (
+        from ecc_codecs.triton_kernels.fault_injection_triton import (
             inject_bit_errors_triton,
         )
 
@@ -174,7 +174,7 @@ class TestTritonFaultInjectionVariousSizes:
 
 class TestTritonFaultInjectionStatistics:
     def test_stats_match_actual_errors(self):
-        from hamming74.triton_kernels.fault_injection_triton import (
+        from ecc_codecs.triton_kernels.fault_injection_triton import (
             inject_bit_errors_triton,
         )
 
@@ -192,7 +192,7 @@ class TestTritonFaultInjectionStatistics:
         ), f"Reported errors {stats[0]} != actual errors {actual_errors}"
 
     def test_elements_with_errors_count(self):
-        from hamming74.triton_kernels.fault_injection_triton import (
+        from ecc_codecs.triton_kernels.fault_injection_triton import (
             inject_bit_errors_triton,
         )
 
@@ -210,7 +210,7 @@ class TestTritonFaultInjectionStatistics:
 
 class TestTritonFaultInjectionBatchedAPI:
     def test_batched_api_returns_error_count(self):
-        from hamming74.triton_kernels.fault_injection_triton import (
+        from ecc_codecs.triton_kernels.fault_injection_triton import (
             inject_bit_errors_triton_batched,
         )
 

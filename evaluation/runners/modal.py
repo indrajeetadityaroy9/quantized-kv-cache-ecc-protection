@@ -69,7 +69,7 @@ def quick_verify_impl() -> bool:
     print(f"GPU available: {gpu_info['available']}")
     print(f"GPU: {gpu_info['name']}")
 
-    from hamming74 import Hamming74, Hamming84, Golay2412, INT4Quantizer
+    from ecc_codecs import Hamming74, Hamming84, Golay2412, INT4Quantizer
 
     # Test Hamming(7,4)
     print("\n[1/4] Testing Hamming(7,4) codec...")
@@ -127,8 +127,8 @@ def verify_quantization_backends_impl() -> bool:
     setup_modal_environment()
 
     import torch
-    from hamming74.quantization import INT4Quantizer
-    from hamming74.quantization_backends import (
+    from ecc_codecs.quantization import INT4Quantizer
+    from ecc_codecs.quantization_backends import (
         list_backends,
         get_quantizer,
         QuantizationMode,

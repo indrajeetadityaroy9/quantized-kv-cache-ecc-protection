@@ -1,8 +1,8 @@
 import pytest
 import torch
 
-from hamming74.quantization import INT4Quantizer
-from hamming74.quantization_backends import (
+from ecc_codecs.quantization import INT4Quantizer
+from ecc_codecs.quantization_backends import (
     QuantizerBackend,
     QuantizationConfig,
     QuantizationMode,
@@ -275,7 +275,7 @@ class TestKIVISymmetricQuantizer:
 
     def test_symmetric_quantization(self):
         """KIVISymmetric should use symmetric quantization (no zero_points)."""
-        from hamming74.quantization_backends import KIVISymmetricQuantizer
+        from ecc_codecs.quantization_backends import KIVISymmetricQuantizer
 
         quantizer = KIVISymmetricQuantizer()
         x = torch.randn(2, 8, 64, 32, dtype=torch.float16)
@@ -286,7 +286,7 @@ class TestKIVISymmetricQuantizer:
 
     def test_kivi_strategy_selection(self):
         """Should still use per-channel for keys, per-token for values."""
-        from hamming74.quantization_backends import KIVISymmetricQuantizer
+        from ecc_codecs.quantization_backends import KIVISymmetricQuantizer
 
         quantizer = KIVISymmetricQuantizer()
 

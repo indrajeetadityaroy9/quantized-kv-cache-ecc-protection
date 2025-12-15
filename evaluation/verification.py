@@ -1,6 +1,6 @@
 from dataclasses import dataclass
 import torch
-from hamming74 import Hamming74, Hamming84, Golay2412, ErrorType
+from ecc_codecs import Hamming74, Hamming84, Golay2412, ErrorType
 
 
 @dataclass

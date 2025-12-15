@@ -309,7 +309,7 @@ def _run_single_trial_triton(
     config: SweepConfig,
 ) -> TrialResult:
     import torch
-    from vllm_kernels.shim import (
+    from kv_cache.ecc_shim import (
         ECCShimConfig,
         patch_model_with_ecc_attention,
         reset_ecc_cache,

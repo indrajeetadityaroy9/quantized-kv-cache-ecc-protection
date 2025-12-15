@@ -18,7 +18,7 @@ class TestUnprotectedShimConfig:
 
     def test_default_config(self):
         """Test default configuration values."""
-        from vllm_kernels.unprotected_shim import UnprotectedShimConfig
+        from kv_cache.unprotected_shim import UnprotectedShimConfig
 
         config = UnprotectedShimConfig()
         assert config.ber == 0.0
@@ -30,7 +30,7 @@ class TestUnprotectedShimConfig:
 
     def test_custom_config(self):
         """Test custom configuration values."""
-        from vllm_kernels.unprotected_shim import UnprotectedShimConfig
+        from kv_cache.unprotected_shim import UnprotectedShimConfig
 
         config = UnprotectedShimConfig(
             ber=1e-3,
@@ -51,7 +51,7 @@ class TestUnprotectedDummyCache:
 
     def test_dummy_cache_interface(self):
         """Test that dummy cache satisfies transformers interface."""
-        from vllm_kernels.unprotected_shim import UnprotectedDummyCache
+        from kv_cache.unprotected_shim import UnprotectedDummyCache
 
         cache = UnprotectedDummyCache(num_layers=12)
         assert len(cache) == 12
@@ -60,7 +60,7 @@ class TestUnprotectedDummyCache:
 
     def test_dummy_cache_update(self):
         """Test dummy cache update tracking."""
-        from vllm_kernels.unprotected_shim import UnprotectedDummyCache
+        from kv_cache.unprotected_shim import UnprotectedDummyCache
 
         cache = UnprotectedDummyCache(num_layers=12)
         k = torch.randn(1, 4, 10, 64)  # [batch, heads, seq, head_dim]
@@ -76,8 +76,8 @@ class TestUnprotectedBackend:
     @pytest.fixture
     def setup_backend(self):
         """Create backend with mock manager."""
-        from vllm_kernels.shim import SimpleBlockManager
-        from vllm_kernels.unprotected_shim import UnprotectedShimConfig, UnprotectedBackend
+        from kv_cache.ecc_shim import SimpleBlockManager
+        from kv_cache.unprotected_shim import UnprotectedShimConfig, UnprotectedBackend
 
         manager = SimpleBlockManager(
             num_blocks=64,
@@ -159,8 +159,8 @@ class TestUnprotectedBackend:
     @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA required")
     def test_error_injection_enabled(self):
         """Test that errors are injected when enabled."""
-        from vllm_kernels.shim import SimpleBlockManager
-        from vllm_kernels.unprotected_shim import UnprotectedShimConfig, UnprotectedBackend
+        from kv_cache.ecc_shim import SimpleBlockManager
+        from kv_cache.unprotected_shim import UnprotectedShimConfig, UnprotectedBackend
 
         manager = SimpleBlockManager(
             num_blocks=64,
@@ -200,7 +200,7 @@ class TestQuantizationAccuracy:
 
     def test_quantization_round_trip(self):
         """Test that quantize -> dequantize preserves values approximately."""
-        from vllm_kernels.paged_cache_ecc import compute_quantization_scales
+        from kv_cache.paged_cache_ecc import compute_quantization_scales
 
         # Create test tensor
         x = torch.randn(1, 8, 4, 64, dtype=torch.float32)
@@ -264,8 +264,8 @@ class TestUnprotectedPagedAttentionShim:
 
     def test_shim_initialization(self, mock_attention_module, mock_rotary_emb):
         """Test that shim initializes correctly."""
-        from vllm_kernels.shim import SimpleBlockManager
-        from vllm_kernels.unprotected_shim import (
+        from kv_cache.ecc_shim import SimpleBlockManager
+        from kv_cache.unprotected_shim import (
             UnprotectedShimConfig,
             UnprotectedBackend,
             UnprotectedPagedAttentionShim,
@@ -296,8 +296,8 @@ class TestUnprotectedPagedAttentionShim:
 
     def test_shim_forward(self, mock_attention_module, mock_rotary_emb):
         """Test that shim forward pass works."""
-        from vllm_kernels.shim import SimpleBlockManager
-        from vllm_kernels.unprotected_shim import (
+        from kv_cache.ecc_shim import SimpleBlockManager
+        from kv_cache.unprotected_shim import (
             UnprotectedShimConfig,
             UnprotectedBackend,
             UnprotectedPagedAttentionShim,
@@ -340,7 +340,7 @@ class TestContextManager:
     def test_context_manager_restores_attention(self):
         """Test that context manager restores original attention on exit."""
         from transformers import AutoModelForCausalLM
-        from vllm_kernels.unprotected_shim import (
+        from kv_cache.unprotected_shim import (
             UnprotectedShimConfig,
             UnprotectedPagedAttentionShim,
             patch_model_with_unprotected_attention,
@@ -374,8 +374,8 @@ class TestStatsTracking:
 
     def test_get_unprotected_stats(self):
         """Test get_unprotected_stats function."""
-        from vllm_kernels.shim import SimpleBlockManager
-        from vllm_kernels.unprotected_shim import (
+        from kv_cache.ecc_shim import SimpleBlockManager
+        from kv_cache.unprotected_shim import (
             UnprotectedShimConfig,
             UnprotectedBackend,
             get_unprotected_stats,

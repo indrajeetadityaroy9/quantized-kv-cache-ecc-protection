@@ -74,13 +74,13 @@ def run_quantization_ecc_benchmark(config=None):
     import torch
     import time
 
-    from hamming74 import Hamming74, Hamming84, Golay2412
-    from hamming74.quantization_backends import (
+    from ecc_codecs import Hamming74, Hamming84, Golay2412
+    from ecc_codecs.quantization_backends import (
         get_quantizer,
         QuantizationMode,
         QuantizationConfig,
     )
-    from hamming74.triton_kernels import inject_bit_errors_triton
+    from ecc_codecs.triton_kernels import inject_bit_errors_triton
 
     if config is None:
         config = BenchmarkConfig()

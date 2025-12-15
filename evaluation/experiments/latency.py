@@ -2,7 +2,7 @@ import time
 from dataclasses import dataclass, field
 import torch
 
-from hamming74 import Hamming74, Hamming84, Golay2412, INT4Quantizer
+from ecc_codecs import Hamming74, Hamming84, Golay2412, INT4Quantizer
 import warnings
 
 from ..timing import (

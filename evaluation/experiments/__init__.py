@@ -37,7 +37,7 @@ from .adaptive_uep import (
     generate_uep_report,
     run_undervolting_stress_test,
 )
-from .vllm_comparison import (
+from .fault_tolerance_benchmark import (
     VLLMComparisonConfig,
     BenchmarkResult,
     ComparisonReport,

@@ -199,7 +199,7 @@ def run_vllm_comparison(
     os.environ["HF_HOME"] = "/cache/huggingface"
     os.environ["TRANSFORMERS_CACHE"] = "/cache/huggingface"
 
-    from evaluation.experiments.vllm_comparison import (
+    from evaluation.experiments.fault_tolerance_benchmark import (
         VLLMComparisonConfig,
         run_full_comparison,
     )
@@ -278,7 +278,7 @@ def run_ber_sweep(
     os.environ["HF_HOME"] = "/cache/huggingface"
     os.environ["TRANSFORMERS_CACHE"] = "/cache/huggingface"
 
-    from evaluation.experiments.vllm_comparison import run_ber_sweep_impl
+    from evaluation.experiments.fault_tolerance_benchmark import run_ber_sweep_impl
 
     if ber_levels is None:
         ber_levels = [0.0, 1e-4, 1e-3, 1e-2]
@@ -402,7 +402,7 @@ def run_kernel_benchmarks(
 ):
     os.chdir("/app")
     sys.path.insert(0, "/app")
-    from vllm_kernels.benchmark_harness import run_attention_benchmark_suite
+    from kv_cache.benchmark_harness import run_attention_benchmark_suite
 
     if batch_sizes is None:
         batch_sizes = [1, 4, 16]

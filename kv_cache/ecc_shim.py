@@ -4,8 +4,8 @@ import torch.nn.functional as F
 from contextlib import contextmanager
 import math
 
-from vllm_kernels.paged_cache_ecc import compute_quantization_scales
-from hamming74.triton_kernels import (
+from kv_cache.paged_cache_ecc import compute_quantization_scales
+from ecc_codecs.triton_kernels import (
     hamming74_encode,
     hamming74_decode,
     hamming84_encode,

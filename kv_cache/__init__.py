@@ -11,6 +11,19 @@ from .attention_ecc import (
     reference_attention_ecc,
 )
 
+from .ecc_shim import (
+    SimpleBlockManager,
+    ECCShimConfig,
+    ECCDummyCache,
+    ECCBackend,
+    ECCPagedAttentionShim,
+    patch_model_with_ecc_attention,
+    reset_ecc_cache,
+    get_ecc_stats,
+    _get_attention_params,
+    _find_rotary_embedding,
+)
+
 from .unprotected_shim import (
     UnprotectedShimConfig,
     UnprotectedDummyCache,
@@ -29,6 +42,16 @@ __all__ = [
     "paged_attention_ecc",
     "paged_attention_ecc_adaptive",
     "reference_attention_ecc",
+    "SimpleBlockManager",
+    "ECCShimConfig",
+    "ECCDummyCache",
+    "ECCBackend",
+    "ECCPagedAttentionShim",
+    "patch_model_with_ecc_attention",
+    "reset_ecc_cache",
+    "get_ecc_stats",
+    "_get_attention_params",
+    "_find_rotary_embedding",
     "UnprotectedShimConfig",
     "UnprotectedDummyCache",
     "UnprotectedBackend",

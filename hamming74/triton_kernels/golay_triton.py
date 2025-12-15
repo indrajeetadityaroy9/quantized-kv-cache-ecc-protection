@@ -2,8 +2,14 @@ import torch
 import triton
 import triton.language as tl
 
-from .config import GOLAY_BLOCK_SIZE, GOLAY_PARITY_MASKS
-from ..golay import Golay2412
+from .config import (
+    GOLAY_BLOCK_SIZE,
+    GOLAY_PARITY_MASKS,
+    GOLAY_B_MATRIX,
+    GOLAY_UNCORRECTABLE,
+    GolayDecodeResult,
+    build_golay_syndrome_table,
+)
 
 
 B_COL_0 = 0b101000111011
@@ -207,17 +213,13 @@ UNCORRECTABLE_MARKER = -1
 
 
 def _build_syndrome_table(device="cuda"):
+    """Build Golay syndrome table, cached per device."""
     if device in _syndrome_table_cache:
         return _syndrome_table_cache[device]
 
-    cpu_codec = Golay2412(device="cuda")
-
-    table = cpu_codec.syndrome_table.clone()
-
-    uncorrectable_mask = table == cpu_codec.UNCORRECTABLE
-    table[uncorrectable_mask] = UNCORRECTABLE_MARKER
-
-    table = table.to(torch.int32).to(device)
+    # Build syndrome table using pure Python/torch (no CPU codec dependency)
+    table = build_golay_syndrome_table()
+    table = table.to(device)
     _syndrome_table_cache[device] = table
     return table
 
@@ -338,71 +340,73 @@ def golay_decode(codewords, return_error_counts=False):
         return decoded, (total_errors_corrected, uncorrectable_count)
 
 
-def verify_triton_vs_cpu():
-    device = "cuda"
-    cpu_codec = Golay2412(device="cuda")
+class Golay2412:
+    """
+    Golay(24,12) codec wrapper using Triton GPU kernels.
 
-    print("Verifying Triton Golay(24,12) vs CPU reference...")
+    Provides the same interface as the original CPU implementation.
+    Corrects up to 3-bit errors per 24-bit codeword.
+    """
 
-    test_triplets = torch.tensor(
-        [
-            [5, 10, 3],
-            [0, 0, 0],
-            [15, 15, 15],
-            [7, 8, 9],
-        ],
-        dtype=torch.uint8,
-    )
+    UNCORRECTABLE = GOLAY_UNCORRECTABLE
 
-    cpu_codewords = cpu_codec.encode(test_triplets)
-    triton_codewords = golay_encode(test_triplets.to(device))
+    def __init__(self, device="cuda"):
+        """
+        Initialize Golay(24,12) codec.
 
-    assert torch.equal(
-        cpu_codewords.to(torch.int32), triton_codewords.cpu()
-    ), "Triton encode does not match CPU!"
-    print("  [PASS] Encode matches CPU reference")
+        Args:
+            device: Target device for tensors
+        """
+        self.device = device
+        self.G, self.H, self.P = self._build_matrices()
+        self.syndrome_table = _build_syndrome_table(str(device))
+        self.h_row_masks = torch.tensor(_H_ROW_MASKS, dtype=torch.int64, device=device)
 
-    decoded, stats = golay_decode(triton_codewords)
-    assert torch.equal(test_triplets.to(device), decoded), "Clean decode failed!"
-    assert stats[0] == 0 and stats[1] == 0, "Should have no errors"
-    print("  [PASS] Clean decode works")
+    def _build_matrices(self):
+        """Build G, H, and P (B) matrices."""
+        B = GOLAY_B_MATRIX.to(self.device)
+        I_12 = torch.eye(12, dtype=torch.uint8, device=self.device)
+        G = torch.cat([I_12, B], dim=1)
+        H = torch.cat([B.T, I_12], dim=1)
+        return G, H, B
 
-    test_triplet = torch.tensor([[5, 10, 3]], dtype=torch.uint8, device=device)
-    codeword = golay_encode(test_triplet)
+    def encode(self, triplets: torch.Tensor) -> torch.Tensor:
+        """
+        Encode triplets of INT4 values to 24-bit Golay codewords.
 
-    for bit_pos in range(24):
-        corrupted = codeword ^ (1 << bit_pos)
-        decoded, stats = golay_decode(corrupted)
-        assert torch.equal(
-            decoded, test_triplet
-        ), f"Single-bit error at bit {bit_pos} not corrected"
+        Args:
+            triplets: Tensor of shape (N, 3) with INT4 values
 
-    print("  [PASS] Single-bit error correction works (all 24 positions)")
+        Returns:
+            Tensor of shape (N,) with 24-bit codewords (int64 for compatibility)
+        """
+        input_tensor = triplets.to(self.device)
+        codewords = golay_encode(input_tensor)
+        # Return as int64 to match original CPU implementation
+        return codewords.to(torch.int64)
 
-    for bit1 in range(0, 24, 4):
-        for bit2 in range(bit1 + 1, 24, 4):
-            corrupted = codeword ^ (1 << bit1) ^ (1 << bit2)
-            decoded, stats = golay_decode(corrupted)
-            assert torch.equal(
-                decoded, test_triplet
-            ), f"Double-bit error at bits {bit1},{bit2} not corrected"
+    def decode(self, codewords: torch.Tensor) -> GolayDecodeResult:
+        """
+        Decode 24-bit Golay codewords to triplets of INT4 values.
 
-    print("  [PASS] Double-bit error correction works")
+        Args:
+            codewords: Tensor of 24-bit codewords
 
-    corrupted = codeword ^ (1 << 0) ^ (1 << 7) ^ (1 << 15)
-    decoded, stats = golay_decode(corrupted)
-    assert torch.equal(decoded, test_triplet), "Triple-bit error not corrected"
-    print("  [PASS] Triple-bit error correction works")
+        Returns:
+            GolayDecodeResult: NamedTuple with (data, errors_corrected, uncorrectable_count)
+        """
+        input_tensor = codewords.to(torch.int32).to(self.device)
+        decoded, stats = golay_decode(input_tensor)
+        return GolayDecodeResult(
+            data=decoded,
+            errors_corrected=stats[0],
+            uncorrectable_count=stats[1],
+        )
 
-    large_triplets = torch.randint(0, 16, (10000, 3), dtype=torch.uint8, device=device)
-    encoded = golay_encode(large_triplets)
-    decoded, stats = golay_decode(encoded)
-    assert torch.equal(large_triplets, decoded), "Large tensor roundtrip failed!"
-    print("  [PASS] Large tensor roundtrip works (10K triplets)")
-
-    print("All Triton Golay(24,12) verifications passed!")
-    return True
-
-
-if __name__ == "__main__":
-    verify_triton_vs_cpu()
+    def verify_properties(self) -> bool:
+        """Verify Golay code properties (for testing)."""
+        # G @ H^T should be zero
+        product = (self.G.float() @ self.H.T.float()) % 2
+        if product.sum() != 0:
+            return False
+        return True

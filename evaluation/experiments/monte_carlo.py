@@ -1,7 +1,6 @@
 import json
 import time
 from dataclasses import dataclass, asdict, field
-from typing import List, Dict, Optional, Any
 from pathlib import Path
 
 import numpy as np
@@ -24,14 +23,14 @@ from ..sweep import SweepConfig, run_sweep, SweepResults
 @dataclass
 class MonteCarloConfig:
     model_name: str = "gpt2"
-    cache_modes: List[str] = None
-    ber_levels: List[float] = None
-    seeds: List[int] = None
+    cache_modes: list = None
+    ber_levels: list = None
+    seeds: list = None
     max_samples: int = DEFAULT_CONFIG["max_samples"]
     max_length: int = DEFAULT_CONFIG["max_length"]
     stride: int = DEFAULT_CONFIG["stride"]
     device: str = "auto"
-    output_dir: Optional[str] = None
+    output_dir: str = None
     backend: str = "triton"
 
     compute_kl_divergence: bool = True
@@ -47,10 +46,7 @@ class MonteCarloConfig:
         if self.seeds is None:
             self.seeds = get_seeds()
 
-    def to_sweep_config(
-        self,
-        clean_logits: List[torch.Tensor] = None,
-    ) -> SweepConfig:
+    def to_sweep_config(self, clean_logits=None):
         return SweepConfig(
             cache_modes=self.cache_modes,
             ber_levels=self.ber_levels,
@@ -68,12 +64,7 @@ class MonteCarloConfig:
         )
 
 
-def run_monte_carlo_experiment(
-    model,
-    tokenizer,
-    config: MonteCarloConfig,
-    verbose: bool = True,
-) -> SweepResults:
+def run_monte_carlo_experiment(model, tokenizer, config, verbose=True):
     from ..metrics import generate_clean_logits
 
     texts = load_wikitext2_test(max_samples=config.max_samples)
@@ -115,7 +106,7 @@ def run_monte_carlo_experiment(
         if verbose:
             print(f"  Generated {len(clean_logits)} clean logits\n")
 
-    def progress_callback(message: str, current: int, total: int):
+    def progress_callback(message, current, total):
         if verbose:
             pct = (current / total) * 100 if total > 0 else 0
             print(f"  [{pct:5.1f}%] {message}")
@@ -129,11 +120,7 @@ def run_monte_carlo_experiment(
     return results
 
 
-def format_results_table(
-    results: SweepResults,
-    include_std: bool = True,
-    include_advanced_metrics: bool = True,
-) -> str:
+def format_results_table(results, include_std=True, include_advanced_metrics=True):
     modes = list(results.aggregated.keys())
     ber_levels = sorted(
         set(
@@ -145,7 +132,7 @@ def format_results_table(
 
     headers = ["BER"] + [CACHE_MODE_LABELS.get(m, m) for m in modes]
 
-    def build_table(title: str, get_mean, get_std, format_val, threshold=0.001):
+    def build_table(title, get_mean, get_std, format_val, threshold=0.001):
         table_lines = []
         table_lines.append("")
         table_lines.append(title)
@@ -320,10 +307,10 @@ def format_results_table(
 
 
 def format_latex_table(
-    results: SweepResults,
-    caption: str = "Perplexity vs BER across protection strategies",
-    include_advanced_metrics: bool = True,
-) -> str:
+    results,
+    caption="Perplexity vs BER across protection strategies",
+    include_advanced_metrics=True,
+):
     modes = list(results.aggregated.keys())
     ber_levels = sorted(
         set(
@@ -342,7 +329,7 @@ def format_latex_table(
         "int12-golay": "Golay(24,12)",
     }
 
-    def build_latex_table(title: str, get_mean, get_std, format_val, threshold=0.001):
+    def build_latex_table(title, get_mean, get_std, format_val, threshold=0.001):
         table_lines = [
             "",
             r"\begin{table}[h]",
@@ -518,11 +505,7 @@ def format_latex_table(
     return "\n".join(lines)
 
 
-def save_results(
-    results: SweepResults,
-    config: MonteCarloConfig,
-    output_dir: str,
-):
+def save_results(results, config, output_dir):
     output_path = Path(output_dir)
     output_path.mkdir(parents=True, exist_ok=True)
 

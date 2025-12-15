@@ -1,6 +1,5 @@
 import time
 from dataclasses import dataclass
-from typing import List, Dict, Any, Tuple
 
 import torch
 import torch.nn as nn
@@ -22,18 +21,18 @@ class ArchitectureInfo:
     n_heads: int
     head_dim: int
     total_params: int
-    layer_names: List[str]
+    layer_names: list
 
 
 @dataclass
 class ComparisonResult:
     gpt2_info: ArchitectureInfo
     llama_info: ArchitectureInfo
-    gpt2_results: Dict[str, Dict[float, Any]]
-    llama_results: Dict[str, Dict[float, Any]]
+    gpt2_results: dict
+    llama_results: dict
 
 
-def analyze_architecture(model: Any, model_name: str) -> ArchitectureInfo:
+def analyze_architecture(model, model_name):
     layers = _find_kv_projection_layers(model)
 
     if layers:
@@ -74,11 +73,11 @@ def run_architecture_comparison(
     gpt2_tokenizer,
     llama_model,
     llama_tokenizer,
-    texts: List[str],
-    ber_levels: List[float] = None,
-    cache_modes: List[str] = None,
-    verbose: bool = True,
-) -> ComparisonResult:
+    texts,
+    ber_levels=None,
+    cache_modes=None,
+    verbose=True,
+):
     if ber_levels is None:
         ber_levels = get_ber_levels()
     if cache_modes is None:
@@ -163,7 +162,7 @@ def run_architecture_comparison(
     )
 
 
-def generate_comparison_report(result: ComparisonResult) -> str:
+def generate_comparison_report(result):
     lines = []
     lines.append("=" * 80)
     lines.append("                    ARCHITECTURE COMPARISON REPORT")
@@ -273,8 +272,8 @@ def generate_comparison_report(result: ComparisonResult) -> str:
     return "\n".join(lines)
 
 
-def _find_kv_projection_layers(model: nn.Module) -> List[Tuple[str, nn.Module]]:
-    target_layers: List[Tuple[str, nn.Module]] = []
+def _find_kv_projection_layers(model):
+    target_layers = []
     for name, module in model.named_modules():
         name_lower = name.lower()
         module_type = type(module).__name__
@@ -291,8 +290,8 @@ def _find_kv_projection_layers(model: nn.Module) -> List[Tuple[str, nn.Module]]:
 
 
 def plot_comparison(
-    result: ComparisonResult,
-    output_path: str = "architecture_comparison.png",
+    result,
+    output_path="architecture_comparison.png",
 ):
     try:
         import matplotlib.pyplot as plt

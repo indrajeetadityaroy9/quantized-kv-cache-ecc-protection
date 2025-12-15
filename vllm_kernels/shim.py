@@ -19,6 +19,31 @@ from hamming74.triton_kernels import (
 from transformers.models.llama.modeling_llama import LlamaRotaryEmbedding
 
 
+class ECCDummyCache:
+    """Dummy cache that satisfies the transformers cache interface.
+
+    The ECC shim manages its own KV cache internally, so this is just
+    a placeholder to prevent errors when use_cache=True.
+    """
+
+    def __init__(self):
+        self.key_cache = []
+        self.value_cache = []
+
+    def to_legacy_cache(self):
+        """Return empty tuple for legacy cache format."""
+        return ()
+
+    def get_seq_length(self, layer_idx=0):
+        return 0
+
+    def get_max_length(self):
+        return None
+
+    def update(self, key_states, value_states, layer_idx, cache_kwargs=None):
+        return key_states, value_states
+
+
 class ECCShimConfig:
     def __init__(
         self,
@@ -781,6 +806,8 @@ class ECCBackend:
         else:
             return torch.zeros_like(q)
 
+        return self._run_attention(q, k_float, v_float, device)
+
     def _run_attention(
         self,
         q,
@@ -815,10 +842,21 @@ class ECCPagedAttentionShim(nn.Module):
     ):
         super().__init__()
 
-        self.q_proj = original_attn.q_proj
-        self.k_proj = original_attn.k_proj
-        self.v_proj = original_attn.v_proj
-        self.o_proj = original_attn.o_proj
+        # Validate and copy projection layers with defensive checks
+        for proj_name in ["q_proj", "k_proj", "v_proj", "o_proj"]:
+            if not hasattr(original_attn, proj_name):
+                available = [a for a in dir(original_attn) if not a.startswith("_")]
+                raise ValueError(
+                    f"Attention module {type(original_attn).__name__} missing '{proj_name}'. "
+                    f"Available attributes: {available}"
+                )
+            proj = getattr(original_attn, proj_name)
+            if proj is None:
+                raise ValueError(
+                    f"'{proj_name}' is None in {type(original_attn).__name__}. "
+                    f"This attention implementation may not be compatible."
+                )
+            setattr(self, proj_name, proj)
 
         num_heads, num_kv_heads, head_dim = _get_attention_params(original_attn)
         self.num_heads = num_heads
@@ -879,8 +917,9 @@ class ECCPagedAttentionShim(nn.Module):
         if not output_attentions and not use_cache:
             return output, None
         elif use_cache:
-            dummy_past = None
-            return output, None, dummy_past
+            # Return ECCDummyCache to satisfy transformers cache interface
+            dummy_cache = ECCDummyCache()
+            return output, None, dummy_cache
         else:
             return output, None
 
@@ -925,7 +964,16 @@ def patch_model_with_ecc_attention(model, config, num_blocks=256):
 
     num_layers = len(layers)
     first_attn = layers[0].self_attn
+
+    # Debug output for attention module inspection
+    print(f"[ECC Shim] Patching {num_layers} layers")
+    print(f"[ECC Shim] Attention type: {type(first_attn).__name__}")
+    print(f"[ECC Shim] Has q_proj: {hasattr(first_attn, 'q_proj')}")
+    print(f"[ECC Shim] Has k_proj: {hasattr(first_attn, 'k_proj')}")
+    print(f"[ECC Shim] Has v_proj: {hasattr(first_attn, 'v_proj')}")
+
     num_heads, num_kv_heads, head_dim = _get_attention_params(first_attn)
+    print(f"[ECC Shim] num_heads={num_heads}, num_kv_heads={num_kv_heads}, head_dim={head_dim}")
 
     manager = SimpleBlockManager(
         num_blocks=num_blocks,

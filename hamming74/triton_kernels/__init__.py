@@ -10,19 +10,29 @@ from .config import (
     SYNDROME_LUT_HAMMING74,
     SYNDROME_LUT_HAMMING84,
     ErrorType,
+    DecodeResult,
+    GolayDecodeResult,
+    HAMMING74_G,
+    HAMMING74_H,
+    HAMMING84_G,
+    HAMMING84_H,
+    GOLAY_B_MATRIX,
 )
 
 from .hamming74_triton import (
+    Hamming74,
     hamming74_encode,
     hamming74_decode,
 )
 
 from .hamming84_triton import (
+    Hamming84,
     hamming84_encode,
     hamming84_decode,
 )
 
 from .golay_triton import (
+    Golay2412,
     golay_encode,
     golay_decode,
 )
@@ -38,6 +48,7 @@ from .interpolation_triton import (
 )
 
 __all__ = [
+    # Config
     "get_physical_dtype",
     "get_codeword_bits",
     "get_data_bits",
@@ -49,6 +60,18 @@ __all__ = [
     "SYNDROME_LUT_HAMMING74",
     "SYNDROME_LUT_HAMMING84",
     "ErrorType",
+    "DecodeResult",
+    "GolayDecodeResult",
+    "HAMMING74_G",
+    "HAMMING74_H",
+    "HAMMING84_G",
+    "HAMMING84_H",
+    "GOLAY_B_MATRIX",
+    # Codec wrapper classes
+    "Hamming74",
+    "Hamming84",
+    "Golay2412",
+    # Raw functions
     "hamming74_encode",
     "hamming74_decode",
     "hamming84_encode",

@@ -6,8 +6,10 @@ from .config import (
     HAMMING84_BLOCK_SIZE,
     SYNDROME_LUT_HAMMING84,
     ErrorType,
+    DecodeResult,
+    HAMMING84_G,
+    HAMMING84_H,
 )
-from ..hamming84_secded import Hamming84
 
 
 @triton.jit
@@ -203,62 +205,53 @@ def hamming84_decode(codewords, return_error_types=False):
         return decoded, (corrected_count, detected_count)
 
 
-def verify_triton_vs_cpu():
-    device = "cuda"
-    cpu_codec = Hamming84(device="cuda", on_double_error="zero")
+class Hamming84:
+    """
+    Hamming(8,4) SECDED codec wrapper using Triton GPU kernels.
 
-    print("Verifying Triton Hamming(8,4) vs CPU reference...")
+    Provides the same interface as the original CPU implementation.
+    Single Error Correct, Double Error Detect (SECDED).
+    """
 
-    all_int4 = torch.arange(16, dtype=torch.uint8)
+    # Class attributes for verification
+    G_74 = HAMMING84_G
+    H_74 = HAMMING84_H
 
-    cpu_codewords = cpu_codec.encode(all_int4)
+    SYNDROME_TO_POSITION = SYNDROME_LUT_HAMMING84
 
-    triton_codewords = hamming84_encode(all_int4.to(device))
+    def __init__(self, device="cuda", on_double_error="zero"):
+        """
+        Initialize Hamming(8,4) codec.
 
-    assert torch.equal(
-        cpu_codewords, triton_codewords.cpu()
-    ), "Triton encode does not match CPU!"
-    print("  [PASS] Encode matches CPU reference")
+        Args:
+            device: Target device for tensors
+            on_double_error: How to handle double errors ("zero" or "raise")
+        """
+        self.device = device
+        self.on_double_error = on_double_error
+        self._G = self.G_74.to(device)
+        self._H = self.H_74.to(device)
+        self._syndrome_lut = self.SYNDROME_TO_POSITION.to(device)
 
-    triton_decoded, stats = hamming84_decode(triton_codewords)
-    assert torch.equal(all_int4.to(device), triton_decoded), "Clean decode failed!"
-    assert stats[0] == 0 and stats[1] == 0, "Should have no errors"
-    print("  [PASS] Clean decode works")
+    def encode(self, int4_values: torch.Tensor) -> torch.Tensor:
+        """Encode 4-bit values to 8-bit Hamming SECDED codewords."""
+        input_tensor = int4_values.to(self.device)
+        return hamming84_encode(input_tensor)
 
-    test_val = torch.tensor([7], dtype=torch.uint8, device=device)
-    codeword = hamming84_encode(test_val)
+    def decode(self, codewords: torch.Tensor) -> DecodeResult:
+        """
+        Decode 8-bit Hamming SECDED codewords to 4-bit values.
 
-    for bit_pos in range(8):
-        corrupted = codeword ^ (1 << bit_pos)
+        Returns:
+            DecodeResult: NamedTuple with (data, error_type, corrected_count, detected_count)
+        """
+        input_tensor = codewords.to(self.device)
         decoded, error_types, stats = hamming84_decode(
-            corrupted, return_error_types=True
+            input_tensor, return_error_types=True
         )
-        assert decoded.item() == 7, f"Single-bit error at bit {bit_pos} not corrected"
-
-    print("  [PASS] Single-bit error correction works")
-
-    for bit1 in range(7):
-        for bit2 in range(bit1 + 1, 7):
-            corrupted = codeword ^ (1 << bit1) ^ (1 << bit2)
-            decoded, error_types, stats = hamming84_decode(
-                corrupted, return_error_types=True
-            )
-
-            assert (
-                decoded.item() == 0 or error_types.item() == ErrorType.DOUBLE_DETECTED
-            ), f"Double-bit error at bits {bit1},{bit2} not handled correctly"
-
-    print("  [PASS] Double-bit error detection works")
-
-    large_input = torch.randint(0, 16, (100000,), dtype=torch.uint8, device=device)
-    encoded = hamming84_encode(large_input)
-    decoded, stats = hamming84_decode(encoded)
-    assert torch.equal(large_input, decoded), "Large tensor roundtrip failed!"
-    print("  [PASS] Large tensor roundtrip works")
-
-    print("All Triton Hamming(8,4) verifications passed!")
-    return True
-
-
-if __name__ == "__main__":
-    verify_triton_vs_cpu()
+        return DecodeResult(
+            data=decoded,
+            error_type=error_types,
+            corrected_count=stats[0],
+            detected_count=stats[1],
+        )

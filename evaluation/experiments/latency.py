@@ -1,12 +1,8 @@
 import time
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional, Tuple
 import torch
 
-from hamming74.hamming74_sec import Hamming74
-from hamming74.hamming84_secded import Hamming84
-from hamming74.golay import Golay2412
-from hamming74.quantization import INT4Quantizer
+from hamming74 import Hamming74, Hamming84, Golay2412, INT4Quantizer
 import warnings
 
 from ..timing import (
@@ -25,7 +21,7 @@ from ..constants import (
 
 @dataclass
 class CodecBenchmarkConfig:
-    tensor_sizes: List[Tuple[int, ...]] = field(
+    tensor_sizes: list = field(
         default_factory=lambda: [
             (1, 256, 768),
             (8, 256, 768),
@@ -38,7 +34,7 @@ class CodecBenchmarkConfig:
     n_iterations: int = 100
     warmup_iterations: int = 10
 
-    codecs: List[str] = field(
+    codecs: list = field(
         default_factory=lambda: [
             "int4",
             "int4-hamming",
@@ -57,7 +53,7 @@ class CodecBenchmarkConfig:
 @dataclass
 class CodecBenchmarkResult:
     codec: str
-    tensor_shape: Tuple[int, ...]
+    tensor_shape: tuple
     n_values: int
     n_iterations: int
 
@@ -78,10 +74,10 @@ class CodecBenchmarkResult:
 
 @dataclass
 class CodecBenchmarkReport:
-    results: List[CodecBenchmarkResult] = field(default_factory=list)
-    config: Optional[CodecBenchmarkConfig] = None
+    results: list = field(default_factory=list)
+    config: CodecBenchmarkConfig = None
 
-    def get_summary_table(self) -> str:
+    def get_summary_table(self):
         lines = [
             "=" * 100,
             "CODEC LATENCY BENCHMARK RESULTS (CPU-BOUND BASELINE)",
@@ -118,7 +114,7 @@ class CodecBenchmarkReport:
 
         return "\n".join(lines)
 
-    def to_dict(self) -> Dict:
+    def to_dict(self):
         return {
             "results": [
                 {
@@ -150,11 +146,7 @@ class CodecBenchmarkReport:
         }
 
 
-def benchmark_codec(
-    codec_name: str,
-    tensor_shape: Tuple[int, ...],
-    config: CodecBenchmarkConfig,
-) -> CodecBenchmarkResult:
+def benchmark_codec(codec_name, tensor_shape, config):
     hamming74 = Hamming74(device="cuda")
     hamming84 = Hamming84(device="cuda", on_double_error="keep")
     golay = Golay2412(device="cuda")
@@ -289,10 +281,7 @@ def benchmark_codec(
     )
 
 
-def run_codec_benchmarks(
-    config: CodecBenchmarkConfig = None,
-    progress_callback=None,
-) -> CodecBenchmarkReport:
+def run_codec_benchmarks(config=None, progress_callback=None):
     if config is None:
         config = CodecBenchmarkConfig()
 
@@ -314,12 +303,12 @@ def run_codec_benchmarks(
 
 
 def run_latency_experiment(
-    batch_sizes: List[int] = None,
-    seq_lengths: List[int] = None,
-    hidden_sizes: List[int] = None,
-    n_iterations: int = 100,
+    batch_sizes=None,
+    seq_lengths=None,
+    hidden_sizes=None,
+    n_iterations=100,
     progress_callback=None,
-) -> CodecBenchmarkReport:
+):
     if batch_sizes is None:
         batch_sizes = [1, 8, 32]
     if seq_lengths is None:

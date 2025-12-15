@@ -5,7 +5,7 @@ import torch
 import torch.nn.functional as F
 from dataclasses import dataclass
 
-from hamming74.hamming84_secded import Hamming84
+from hamming74 import Hamming84
 from hamming74.triton_kernels import (
     golay_decode,
     golay_encode,

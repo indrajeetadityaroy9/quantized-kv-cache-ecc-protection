@@ -1,5 +1,4 @@
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional, Any
 import math
 import torch
 import torch.nn as nn
@@ -15,11 +14,11 @@ from ..constants import BER_LEVELS, get_seeds
 
 @dataclass
 class UEPExperimentConfig:
-    sink_boundaries: List[int] = field(default_factory=lambda: [32, 64, 128, 256, 512])
+    sink_boundaries: list = field(default_factory=lambda: [32, 64, 128, 256, 512])
 
-    ber_levels: List[float] = field(default_factory=lambda: [1e-4, 1e-3, 1e-2])
+    ber_levels: list = field(default_factory=lambda: [1e-4, 1e-3, 1e-2])
 
-    comparison_modes: List[str] = field(
+    comparison_modes: list = field(
         default_factory=lambda: [
             "int4-hamming",
             "int4-hamming84",
@@ -28,7 +27,7 @@ class UEPExperimentConfig:
         ]
     )
 
-    seeds: List[int] = field(default_factory=get_seeds)
+    seeds: list = field(default_factory=get_seeds)
 
     hidden_dim: int = 768
     block_size: int = 32
@@ -42,7 +41,7 @@ class UEPExperimentConfig:
 class UEPExperimentResult:
     mode: str
     ber: float
-    sink_token_count: Optional[int]
+    sink_token_count: int
     seed: int
 
     perplexity: float
@@ -52,11 +51,11 @@ class UEPExperimentResult:
     errors_detected: int = 0
     total_values: int = 0
 
-    sink_errors_corrected: Optional[int] = None
-    context_errors_corrected: Optional[int] = None
-    migrated_errors_avoided: Optional[int] = None
+    sink_errors_corrected: int = None
+    context_errors_corrected: int = None
+    migrated_errors_avoided: int = None
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self):
         d = {
             "mode": self.mode,
             "ber": self.ber,
@@ -79,9 +78,9 @@ class UEPExperimentResult:
 class UEPBoundarySweepResult:
     ber: float
     seed: int
-    results_by_boundary: Dict[int, UEPExperimentResult] = field(default_factory=dict)
+    results_by_boundary: dict = field(default_factory=dict)
 
-    def get_optimal_boundary(self) -> int:
+    def get_optimal_boundary(self):
         if not self.results_by_boundary:
             return 128
         return min(
@@ -93,9 +92,9 @@ class UEPBoundarySweepResult:
 @dataclass
 class UEPComparisonResult:
     ber: float
-    results_by_mode: Dict[str, List[UEPExperimentResult]] = field(default_factory=dict)
+    results_by_mode: dict = field(default_factory=dict)
 
-    def get_best_mode(self) -> str:
+    def get_best_mode(self):
         mode_means = {}
         for mode, results in self.results_by_mode.items():
             if mode != "fp16" and results:
@@ -106,16 +105,16 @@ class UEPComparisonResult:
 
 
 def run_single_uep_trial(
-    model: nn.Module,
+    model,
     tokenizer,
-    texts: List[str],
-    mode: str,
-    ber: float,
-    seed: int,
-    sink_token_count: Optional[int] = None,
-    config: Optional[UEPExperimentConfig] = None,
-    fp16_baseline: Optional[float] = None,
-) -> UEPExperimentResult:
+    texts,
+    mode,
+    ber,
+    seed,
+    sink_token_count=None,
+    config=None,
+    fp16_baseline=None,
+):
     if config is None:
         config = UEPExperimentConfig()
 
@@ -201,14 +200,14 @@ def run_single_uep_trial(
 
 
 def run_uep_boundary_sweep(
-    model: nn.Module,
+    model,
     tokenizer,
-    texts: List[str],
-    ber: float,
-    seed: int,
-    config: Optional[UEPExperimentConfig] = None,
+    texts,
+    ber,
+    seed,
+    config=None,
     progress_callback=None,
-) -> UEPBoundarySweepResult:
+):
     if config is None:
         config = UEPExperimentConfig()
 
@@ -241,13 +240,13 @@ def run_uep_boundary_sweep(
 
 
 def run_uep_comparison(
-    model: nn.Module,
+    model,
     tokenizer,
-    texts: List[str],
-    ber: float,
-    config: Optional[UEPExperimentConfig] = None,
+    texts,
+    ber,
+    config=None,
     progress_callback=None,
-) -> UEPComparisonResult:
+):
     if config is None:
         config = UEPExperimentConfig()
 
@@ -297,7 +296,7 @@ def run_uep_comparison(
     return result
 
 
-def generate_uep_report(comparison: UEPComparisonResult) -> str:
+def generate_uep_report(comparison):
     lines = [
         "=" * 80,
         f"UEP COMPARISON REPORT (BER = {comparison.ber})",
@@ -359,12 +358,12 @@ def generate_uep_report(comparison: UEPComparisonResult) -> str:
 
 
 def run_undervolting_stress_test(
-    model: nn.Module,
+    model,
     tokenizer,
-    texts: List[str],
-    config: Optional[UEPExperimentConfig] = None,
+    texts,
+    config=None,
     progress_callback=None,
-) -> Dict[float, UEPComparisonResult]:
+):
     if config is None:
         config = UEPExperimentConfig()
 

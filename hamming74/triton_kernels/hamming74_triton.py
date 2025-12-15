@@ -5,8 +5,9 @@ import triton.language as tl
 from .config import (
     HAMMING74_BLOCK_SIZE,
     SYNDROME_LUT_HAMMING74,
+    HAMMING74_G,
+    HAMMING74_H,
 )
-from ..hamming74_sec import Hamming74
 
 
 @triton.jit
@@ -177,66 +178,48 @@ def hamming74_decode(codewords, return_error_detected=False):
         return decoded, (errors_corrected_count,)
 
 
-def verify_triton_vs_cpu():
-    device = "cuda"
-    cpu_codec = Hamming74(device="cuda")
+class Hamming74:
+    """
+    Hamming(7,4) codec wrapper using Triton GPU kernels.
 
-    print("Verifying Triton Hamming(7,4) vs CPU reference...")
+    Provides the same interface as the original CPU implementation.
+    """
 
-    all_int4 = torch.arange(16, dtype=torch.uint8)
+    # Class attributes for verification (accessible as Hamming74.G, Hamming74.H)
+    G = HAMMING74_G
+    H = HAMMING74_H
 
-    cpu_codewords = cpu_codec.encode(all_int4)
+    SYNDROME_TO_POSITION = SYNDROME_LUT_HAMMING74
 
-    triton_codewords = hamming74_encode(all_int4.to(device))
+    def __init__(self, device="cuda"):
+        self.device = device
+        self._G = self.G.to(device)
+        self._H = self.H.to(device)
+        self._syndrome_lut = self.SYNDROME_TO_POSITION.to(device)
 
-    assert torch.equal(
-        cpu_codewords, triton_codewords.cpu()
-    ), "Triton encode does not match CPU!"
-    print("  [PASS] Encode matches CPU reference")
+    def encode(self, int4_values: torch.Tensor) -> torch.Tensor:
+        """Encode 4-bit values to 7-bit Hamming codewords."""
+        input_tensor = int4_values.to(self.device)
+        return hamming74_encode(input_tensor)
 
-    triton_decoded, stats = hamming74_decode(triton_codewords)
-    assert torch.equal(all_int4.to(device), triton_decoded), "Clean decode failed!"
-    assert stats[0] == 0, "Should have no errors"
-    print("  [PASS] Clean decode works")
+    def decode(self, codewords: torch.Tensor):
+        """
+        Decode 7-bit Hamming codewords to 4-bit values.
 
-    test_val = torch.tensor([7], dtype=torch.uint8, device=device)
-    codeword = hamming74_encode(test_val)
-
-    for bit_pos in range(7):
-        corrupted = codeword ^ (1 << bit_pos)
-        decoded, error_detected, stats = hamming74_decode(
-            corrupted, return_error_detected=True
+        Returns:
+            tuple: (decoded_values, errors_detected_bool_tensor)
+        """
+        input_tensor = codewords.to(self.device)
+        decoded, error_detected, _ = hamming74_decode(
+            input_tensor, return_error_detected=True
         )
-        assert decoded.item() == 7, f"Single-bit error at bit {bit_pos} not corrected"
-        assert error_detected.item() == 1, f"Error at bit {bit_pos} not detected"
+        # Convert to bool tensor to match original CPU interface
+        return decoded, error_detected.bool()
 
-    print("  [PASS] Single-bit error correction works (all 7 positions)")
+    def encode_batch(self, int4_tensor: torch.Tensor) -> torch.Tensor:
+        """Encode batch of 4-bit values."""
+        return self.encode(int4_tensor)
 
-    large_input = torch.randint(0, 16, (100000,), dtype=torch.uint8, device=device)
-    encoded = hamming74_encode(large_input)
-    decoded, stats = hamming74_decode(encoded)
-    assert torch.equal(large_input, decoded), "Large tensor roundtrip failed!"
-    assert stats[0] == 0, "Clean data should have no corrections"
-    print("  [PASS] Large tensor roundtrip works (100K values)")
-
-    encoded_with_errors = encoded.clone()
-    error_mask = torch.zeros(100000, dtype=torch.bool, device=device)
-    error_mask[::2] = True
-    bit_positions = torch.randint(0, 7, (50000,), device=device)
-    error_pattern = (1 << bit_positions).to(torch.uint8)
-    encoded_with_errors[::2] ^= error_pattern
-
-    decoded, stats = hamming74_decode(encoded_with_errors)
-    expected_errors = 50000
-    assert (
-        stats[0] == expected_errors
-    ), f"Expected {expected_errors} corrections, got {stats[0]}"
-    assert torch.equal(decoded, large_input), "Corrected data doesn't match original!"
-    print(f"  [PASS] Error correction statistics correct ({stats[0]} errors corrected)")
-
-    print("All Triton Hamming(7,4) verifications passed!")
-    return True
-
-
-if __name__ == "__main__":
-    verify_triton_vs_cpu()
+    def decode_batch(self, codeword_tensor: torch.Tensor):
+        """Decode batch of codewords."""
+        return self.decode(codeword_tensor)

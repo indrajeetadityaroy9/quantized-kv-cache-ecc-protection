@@ -5,18 +5,6 @@ from datetime import datetime
 from pathlib import Path
 
 import modal
-from evaluation.runners.modal import (
-    run_tests_impl,
-    quick_verify_impl,
-    run_benchmark_impl,
-)
-from evaluation.experiments.latency import CodecBenchmarkConfig, run_codec_benchmarks
-from evaluation.runners.triton_eval import (
-    run_single_triton_trial,
-    format_ppl_table,
-    aggregate_results,
-)
-from vllm_kernels.benchmark_harness import run_attention_benchmark_suite
 
 app = modal.App("hamming74-experiments")
 hf_secret = modal.Secret.from_name("huggingface-secret")
@@ -25,9 +13,10 @@ image = (
     modal.Image.debian_slim(python_version="3.11")
     .pip_install(
         "torch>=2.0.0",
+        "triton>=2.1.0",
         "numpy>=1.21.0",
         "pytest>=7.0.0",
-        "transformers>=4.30.0",
+        "transformers>=4.40.0,<4.45.0",
         "datasets>=2.14.0",
         "accelerate",
         "huggingface-hub",
@@ -49,6 +38,7 @@ output_volume = modal.Volume.from_name("hamming74-results", create_if_missing=Tr
 def run_tests(test_file=None, verbose=True):
     os.chdir("/app")
     sys.path.insert(0, "/app")
+    from evaluation.runners.modal import run_tests_impl
     return run_tests_impl(test_file=test_file, verbose=verbose)
 
 
@@ -64,7 +54,7 @@ def run_llama_tests(test_file=None, verbose=True):
     sys.path.insert(0, "/app")
     os.environ["HF_HOME"] = "/cache/huggingface"
     os.environ["TRANSFORMERS_CACHE"] = "/cache/huggingface"
-
+    from evaluation.runners.modal import run_tests_impl
     return run_tests_impl(test_file=test_file, verbose=verbose)
 
 
@@ -77,7 +67,36 @@ def run_llama_tests(test_file=None, verbose=True):
 def quick_verify():
     os.chdir("/app")
     sys.path.insert(0, "/app")
+    from evaluation.runners.modal import quick_verify_impl
     return quick_verify_impl()
+
+
+@app.function(
+    image=image,
+    gpu="T4",
+    timeout=600,
+    volumes={"/cache": model_cache},
+)
+def verify_quantization():
+    """Verify all quantization backends work correctly."""
+    os.chdir("/app")
+    sys.path.insert(0, "/app")
+    from evaluation.runners.modal import verify_quantization_backends_impl
+    return verify_quantization_backends_impl()
+
+
+@app.function(
+    image=image,
+    gpu="T4",
+    timeout=1800,
+    volumes={"/cache": model_cache},
+)
+def run_quantization_ecc_comparison():
+    """Run comprehensive quantization × ECC comparison benchmark."""
+    os.chdir("/app")
+    sys.path.insert(0, "/app")
+    from evaluation.experiments.quantization_ecc_comparison import run_benchmark_impl
+    return run_benchmark_impl()
 
 
 @app.function(
@@ -153,6 +172,7 @@ def get_results(run_name):
 def run_latency_benchmark(n_iterations=100, save_to_volume=True):
     os.chdir("/app")
     sys.path.insert(0, "/app")
+    from evaluation.experiments.latency import CodecBenchmarkConfig, run_codec_benchmarks
 
     config = CodecBenchmarkConfig(
         tensor_sizes=[
@@ -208,7 +228,7 @@ def run_triton_worker(model_name, mode, ber, seed, max_samples):
     sys.path.insert(0, "/app")
     os.environ["HF_HOME"] = "/cache/huggingface"
     os.environ["TRANSFORMERS_CACHE"] = "/cache/huggingface"
-
+    from evaluation.runners.triton_eval import run_single_triton_trial
     return run_single_triton_trial(model_name, mode, ber, seed, max_samples)
 
 
@@ -229,6 +249,7 @@ def run_kernel_benchmarks(
 ):
     os.chdir("/app")
     sys.path.insert(0, "/app")
+    from vllm_kernels.benchmark_harness import run_attention_benchmark_suite
 
     if batch_sizes is None:
         batch_sizes = [1, 4, 16]
@@ -294,6 +315,7 @@ def run_benchmark(
 ):
     os.chdir("/app")
     sys.path.insert(0, "/app")
+    from evaluation.runners.modal import run_benchmark_impl
 
     results = run_benchmark_impl(
         models=models,
@@ -428,6 +450,82 @@ def run_benchmark(
     return results
 
 
+def format_ppl_table(results):
+    """Format perplexity results as a markdown table.
+
+    Copied from evaluation/runners/triton_eval.py to avoid GPU imports locally.
+    """
+    from collections import defaultdict
+
+    grouped = defaultdict(list)
+    for r in results:
+        key = (r["mode"], r["ber"])
+        grouped[key].append(r["ppl"])
+
+    modes = sorted(set(r["mode"] for r in results))
+    bers = sorted(set(r["ber"] for r in results))
+
+    lines = []
+    lines.append("| Protection | " + " | ".join(f"BER={b:.0e}" for b in bers) + " |")
+    lines.append("|" + "----|" * (len(bers) + 1))
+
+    for mode in modes:
+        row = f"| {mode} |"
+        for ber in bers:
+            ppls = grouped.get((mode, ber), [])
+            if ppls:
+                mean_ppl = sum(ppls) / len(ppls)
+                std_ppl = (
+                    (sum((p - mean_ppl) ** 2 for p in ppls) / len(ppls)) ** 0.5
+                    if len(ppls) > 1
+                    else 0
+                )
+                if mean_ppl > 1000:
+                    row += f" >1000 |"
+                else:
+                    row += f" {mean_ppl:.1f}+/-{std_ppl:.1f} |"
+            else:
+                row += " - |"
+        lines.append(row)
+
+    return "\n".join(lines)
+
+
+def aggregate_results(results):
+    """Aggregate results across seeds.
+
+    Copied from evaluation/runners/triton_eval.py to avoid GPU imports locally.
+    """
+    from collections import defaultdict
+    import statistics
+
+    grouped = defaultdict(list)
+    for r in results:
+        key = (r["mode"], r["ber"])
+        grouped[key].append(r)
+
+    aggregated = {}
+    for (mode, ber), trials in grouped.items():
+        ppls = [t["ppl"] for t in trials if t["ppl"] != float("inf")]
+
+        if mode not in aggregated:
+            aggregated[mode] = {}
+
+        aggregated[mode][str(ber)] = {
+            "ppl_mean": statistics.mean(ppls) if ppls else float("inf"),
+            "ppl_std": statistics.stdev(ppls) if len(ppls) > 1 else 0.0,
+            "ppl_min": min(ppls) if ppls else float("inf"),
+            "ppl_max": max(ppls) if ppls else float("inf"),
+            "num_trials": len(trials),
+            "num_valid": len(ppls),
+            "total_injection_count": sum(t.get("injection_count", 0) for t in trials),
+            "total_errors_corrected": sum(t.get("errors_corrected", 0) for t in trials),
+            "total_errors_detected": sum(t.get("errors_detected", 0) for t in trials),
+        }
+
+    return aggregated
+
+
 def save_triton_results(results, output_path):
     os.makedirs(output_path, exist_ok=True)
 
@@ -476,6 +574,8 @@ def save_triton_results(results, output_path):
 def main(
     test_file=None,
     verify=False,
+    verify_quantization_flag=False,
+    compare_quant_ecc=False,
     llama_tests=False,
     benchmark=False,
     models="gpt2",
@@ -486,7 +586,7 @@ def main(
     latency=False,
     latency_iterations=100,
     eval_triton=False,
-    triton_model="meta-llama/Llama-3.1-8B",
+    triton_model="TinyLlama/TinyLlama-1.1B-Chat-v1.0",
     triton_seeds=3,
     triton_samples=50,
     benchmark_kernels=False,
@@ -565,6 +665,38 @@ def main(
         result = quick_verify.remote()
         print(f"\nVerification: {'PASSED' if result else 'FAILED'}")
 
+    elif verify_quantization_flag:
+        print("\n" + "=" * 70)
+        print("VERIFYING QUANTIZATION BACKENDS ON GPU")
+        print("=" * 70)
+        result = verify_quantization.remote()
+        print(f"\nQuantization Verification: {'PASSED' if result else 'FAILED'}")
+
+    elif compare_quant_ecc:
+        print("\n" + "=" * 70)
+        print("QUANTIZATION × ECC COMPARISON BENCHMARK")
+        print("=" * 70)
+        result = run_quantization_ecc_comparison.remote()
+
+        print("\n" + result.get("comparison_table", "No results"))
+        print("\n" + result.get("quantization_table", ""))
+
+        # Save results if output specified
+        if output:
+            os.makedirs(output, exist_ok=True)
+            with open(f"{output}/quant_ecc_comparison.json", "w") as f:
+                # Convert aggregated dict to serializable format
+                serializable = {
+                    "config": result.get("config", {}),
+                    "aggregated": result.get("aggregated", {}),
+                }
+                json.dump(serializable, f, indent=2)
+            with open(f"{output}/comparison_table.txt", "w") as f:
+                f.write(result.get("comparison_table", ""))
+                f.write("\n\n")
+                f.write(result.get("quantization_table", ""))
+            print(f"\nResults saved to: {output}")
+
     elif latency:
         results = run_latency_benchmark.remote(n_iterations=latency_iterations)
         print("\n" + "=" * 70)
@@ -614,6 +746,8 @@ def main(
 
         modes = all_modes
         bers = [0.0, 1e-4, 1e-3, 1e-2]
+        triton_seeds = int(triton_seeds) if isinstance(triton_seeds, str) else triton_seeds
+        triton_samples = int(triton_samples) if isinstance(triton_samples, str) else triton_samples
         seed_list = [42, 101, 997][:triton_seeds]
 
         args_list = [

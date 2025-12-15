@@ -1,5 +1,4 @@
 import torch
-from typing import List, Dict, Any, Optional
 from dataclasses import dataclass
 
 from ..constants import CACHE_MODE_LABELS
@@ -44,13 +43,13 @@ MODE_CONFIG = {
 def run_generation_demo(
     model,
     tokenizer,
-    prompts: List[str],
-    cache_modes: List[str],
-    ber: float = 0.05,
-    seed: int = 42,
-    max_new_tokens: int = 30,
-    device: str = "cuda",
-) -> List[GenerationResult]:
+    prompts,
+    cache_modes,
+    ber=0.05,
+    seed=42,
+    max_new_tokens=30,
+    device="cuda",
+):
     from vllm_kernels.shim import (
         ECCShimConfig,
         patch_model_with_ecc_attention,
@@ -140,7 +139,7 @@ def run_generation_demo(
     return results
 
 
-def analyze_generation(prompt: str, generated: str, cache_mode: str) -> str:
+def analyze_generation(prompt, generated, cache_mode):
     if cache_mode == "fp16":
         return "BASELINE"
 
@@ -169,7 +168,7 @@ def analyze_generation(prompt: str, generated: str, cache_mode: str) -> str:
     return ""
 
 
-def format_generation_results(results: List[GenerationResult]) -> str:
+def format_generation_results(results):
     lines = []
     lines.append("=" * 80)
     lines.append("TEXT GENERATION COMPARISON")
@@ -222,7 +221,7 @@ def format_generation_results(results: List[GenerationResult]) -> str:
     return "\n".join(lines)
 
 
-def results_to_dict(results: List[GenerationResult]) -> List[Dict[str, Any]]:
+def results_to_dict(results):
     return [
         {
             "cache_mode": r.cache_mode,

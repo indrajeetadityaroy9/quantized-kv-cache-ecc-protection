@@ -1486,6 +1486,96 @@ def compute_vllm_perplexity_attention_injection(
     return None, None, "No tokens processed"
 
 
+def compute_unprotected_perplexity_with_ber(config, ber=0.0):
+    """
+    Compute perplexity using UNPROTECTED INT4 KV cache with error injection.
+
+    This is the fair comparison point for ECC-protected configs:
+    - Same INT4 quantization as ECC configs
+    - Same block-based storage
+    - NO error correction
+
+    Error injection happens AFTER cache read, BEFORE dequantize, simulating
+    realistic memory corruption in stored data.
+    """
+    import torch
+    from transformers import AutoModelForCausalLM, AutoTokenizer
+
+    try:
+        from vllm_kernels.unprotected_shim import (
+            UnprotectedShimConfig,
+            patch_model_with_unprotected_attention,
+            reset_unprotected_cache,
+            get_unprotected_stats,
+        )
+    except ImportError as e:
+        return None, None, f"Unprotected shim not available: {e}"
+
+    try:
+        model = AutoModelForCausalLM.from_pretrained(
+            config.model_name,
+            torch_dtype=torch.float16,
+            device_map="cuda",
+        )
+        tokenizer = AutoTokenizer.from_pretrained(config.model_name)
+        if tokenizer.pad_token is None:
+            tokenizer.pad_token = tokenizer.eos_token
+    except Exception as e:
+        return None, None, f"Failed to load model: {e}"
+
+    # Configure unprotected cache with INT4 quantization
+    unprotected_config = UnprotectedShimConfig(
+        ber=ber,
+        inject_errors=(ber > 0),
+        num_blocks=2048,
+        block_size=16,
+    )
+
+    prompts = load_benchmark_prompts(config.perplexity_samples, max_length=256)
+
+    total_loss = 0.0
+    total_tokens = 0
+
+    try:
+        with patch_model_with_unprotected_attention(model, unprotected_config, num_blocks=2048):
+            for prompt in prompts:
+                reset_unprotected_cache(model)
+                inputs = tokenizer(
+                    prompt,
+                    return_tensors="pt",
+                    max_length=256,
+                    truncation=True,
+                ).to("cuda")
+
+                with torch.no_grad():
+                    outputs = model(
+                        **inputs,
+                        labels=inputs["input_ids"],
+                        use_cache=True,
+                    )
+
+                if outputs.loss is not None and not torch.isnan(outputs.loss):
+                    seq_len = inputs["input_ids"].shape[1]
+                    total_loss += outputs.loss.item() * seq_len
+                    total_tokens += seq_len
+
+            # Get stats
+            stats = get_unprotected_stats(model)
+
+    except Exception as e:
+        del model
+        torch.cuda.empty_cache()
+        return None, None, f"Unprotected perplexity error: {e}"
+
+    del model
+    torch.cuda.empty_cache()
+
+    if total_tokens > 0:
+        ppl = math.exp(total_loss / total_tokens)
+        return ppl, stats, None
+    return None, None, "No tokens processed"
+
+
 def compute_ecc_perplexity_with_ber(config, codec="hamming84", ber=0.0):
     """Compute perplexity using ECC-protected attention with error injection."""
     import torch
@@ -1570,7 +1660,7 @@ def run_ber_sweep_comparison(config, progress_callback=None, use_attention_injec
     Run BER sweep comparison between unprotected and ECC-protected.
 
     This demonstrates:
-    1. How unprotected models degrade as BER increases
+    1. How unprotected INT4 models degrade as BER increases
     2. How ECC protection maintains quality under errors
 
     Args:
@@ -1583,9 +1673,11 @@ def run_ber_sweep_comparison(config, progress_callback=None, use_attention_injec
     results = []
 
     # Configs to compare at each BER level
-    # Note: "hf_fp16" uses HuggingFace model directly with attention injection
+    # Key insight: unprotected_int4, ecc_hamming84, and ecc_golay all use the SAME
+    # INT4 quantization, so baseline perplexity should be identical.
+    # The ONLY difference is ECC protection vs no protection.
     sweep_configs = [
-        ("hf_fp16", "auto"),      # HuggingFace FP16 (unprotected, with attention injection)
+        ("unprotected_int4", None),    # INT4 without ECC (fair comparison baseline)
         ("ecc_hamming84", "hamming84"),
         ("ecc_golay", "golay"),
     ]
@@ -1607,7 +1699,12 @@ def run_ber_sweep_comparison(config, progress_callback=None, use_attention_injec
             stats = None
             error = None
 
-            if cfg_name.startswith("hf_") or cfg_name.startswith("vllm_"):
+            if cfg_name == "unprotected_int4":
+                # Unprotected INT4 - same quantization as ECC, no protection
+                ppl, stats, error = compute_unprotected_perplexity_with_ber(
+                    config, ber
+                )
+            elif cfg_name.startswith("hf_") or cfg_name.startswith("vllm_"):
                 # Use attention-level injection for fair comparison
                 # This actually affects perplexity, unlike cache-level injection
                 ppl, stats, error = compute_vllm_perplexity_attention_injection(

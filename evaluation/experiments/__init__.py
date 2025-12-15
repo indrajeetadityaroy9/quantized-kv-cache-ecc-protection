@@ -54,6 +54,7 @@ from .vllm_comparison import (
     compute_vllm_perplexity_with_ber,
     compute_vllm_perplexity_attention_injection,
     compute_ecc_perplexity_with_ber,
+    compute_unprotected_perplexity_with_ber,
 )
 
 __all__ = [
@@ -102,4 +103,5 @@ __all__ = [
     "compute_vllm_perplexity_with_ber",
     "compute_vllm_perplexity_attention_injection",
     "compute_ecc_perplexity_with_ber",
+    "compute_unprotected_perplexity_with_ber",
 ]

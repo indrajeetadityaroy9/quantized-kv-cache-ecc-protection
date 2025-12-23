@@ -1,0 +1,62 @@
+{
+  "metadata": {
+    "model": "gpt2",
+    "dataset": "wikitext2",
+    "max_samples": 50,
+    "seeds": [42],
+    "downstream": false,
+    "gpu": "NVIDIA A100 80GB PCIe",
+    "date": "2025-12-21"
+  },
+  "ber_levels": [0.0, 1e-06, 1e-05, 1e-04, 1e-03, 1e-02],
+  "results": {
+    "fp16": {
+      "0.0": {"ppl": 56.20, "kl": 0.0, "top5": 100.0, "corrected": 0, "catastrophic": 0.0},
+      "1e-06": {"ppl": 56.20, "kl": 0.0, "top5": 100.0, "corrected": 0, "catastrophic": 0.0},
+      "1e-05": {"ppl": 56.20, "kl": 0.0, "top5": 100.0, "corrected": 0, "catastrophic": 0.0},
+      "1e-04": {"ppl": 56.20, "kl": 0.0, "top5": 100.0, "corrected": 0, "catastrophic": 0.0},
+      "1e-03": {"ppl": 56.20, "kl": 0.0, "top5": 100.0, "corrected": 0, "catastrophic": 0.0},
+      "1e-02": {"ppl": 56.20, "kl": 0.0, "top5": 100.0, "corrected": 0, "catastrophic": 0.0}
+    },
+    "int4": {
+      "0.0": {"ppl": 56.20, "kl": 0.0, "top5": 100.0, "corrected": 0, "catastrophic": 0.0},
+      "1e-06": {"ppl": 58.71, "kl": 0.0, "top5": 100.0, "corrected": 0, "catastrophic": 0.0},
+      "1e-05": {"ppl": 70.01, "kl": 0.0, "top5": 100.0, "corrected": 0, "catastrophic": 0.0},
+      "1e-04": {"ppl": 1126.00, "kl": 0.0, "top5": 100.0, "corrected": 0, "catastrophic": 32.0},
+      "1e-03": {"ppl": 98195.63, "kl": 0.0, "top5": 100.0, "corrected": 0, "catastrophic": 100.0},
+      "1e-02": {"ppl": 831543.82, "kl": 0.0, "top5": 100.0, "corrected": 0, "catastrophic": 100.0}
+    },
+    "int4-hamming": {
+      "0.0": {"ppl": 57.94, "kl": 0.0, "top5": 100.0, "corrected": 0, "catastrophic": 0.0},
+      "1e-06": {"ppl": 57.94, "kl": 0.0, "top5": 100.0, "corrected": 492, "catastrophic": 0.0},
+      "1e-05": {"ppl": 57.94, "kl": 0.0, "top5": 100.0, "corrected": 8004, "catastrophic": 0.0},
+      "1e-04": {"ppl": 57.94, "kl": 0.0, "top5": 100.0, "corrected": 82704, "catastrophic": 0.0},
+      "1e-03": {"ppl": 57.82, "kl": 0.0, "top5": 100.0, "corrected": 834276, "catastrophic": 0.0},
+      "1e-02": {"ppl": 62.91, "kl": 0.0, "top5": 100.0, "corrected": 8062692, "catastrophic": 0.0}
+    },
+    "int4-hamming84": {
+      "0.0": {"ppl": 57.94, "kl": 0.0, "top5": 100.0, "corrected": 0, "catastrophic": 0.0},
+      "1e-06": {"ppl": 57.94, "kl": 0.0, "top5": 100.0, "corrected": 492, "catastrophic": 0.0},
+      "1e-05": {"ppl": 57.94, "kl": 0.0, "top5": 100.0, "corrected": 8004, "catastrophic": 0.0},
+      "1e-04": {"ppl": 57.95, "kl": 0.0, "top5": 100.0, "corrected": 82680, "catastrophic": 0.0},
+      "1e-03": {"ppl": 58.09, "kl": 0.0, "top5": 100.0, "corrected": 830880, "catastrophic": 0.0},
+      "1e-02": {"ppl": 82.58, "kl": 0.0, "top5": 100.0, "corrected": 7755204, "catastrophic": 0.0}
+    },
+    "int4-hamming84-interp": {
+      "0.0": {"ppl": 57.94, "kl": 0.0, "top5": 100.0, "corrected": 0, "catastrophic": 0.0},
+      "1e-06": {"ppl": 57.94, "kl": 0.0, "top5": 100.0, "corrected": 492, "catastrophic": 0.0},
+      "1e-05": {"ppl": 57.94, "kl": 0.0, "top5": 100.0, "corrected": 8004, "catastrophic": 0.0},
+      "1e-04": {"ppl": 57.95, "kl": 0.0, "top5": 100.0, "corrected": 82680, "catastrophic": 0.0},
+      "1e-03": {"ppl": 58.09, "kl": 0.0, "top5": 100.0, "corrected": 830880, "catastrophic": 0.0},
+      "1e-02": {"ppl": 82.58, "kl": 0.0, "top5": 100.0, "corrected": 7755204, "catastrophic": 0.0}
+    },
+    "int12-golay": {
+      "0.0": {"ppl": 57.94, "kl": 0.0, "top5": 100.0, "corrected": 0, "catastrophic": 0.0},
+      "1e-06": {"ppl": 57.94, "kl": 0.0, "top5": 100.0, "corrected": 0, "catastrophic": 0.0},
+      "1e-05": {"ppl": 57.94, "kl": 0.0, "top5": 100.0, "corrected": 0, "catastrophic": 0.0},
+      "1e-04": {"ppl": 57.94, "kl": 0.0, "top5": 100.0, "corrected": 0, "catastrophic": 0.0},
+      "1e-03": {"ppl": 57.94, "kl": 0.0, "top5": 100.0, "corrected": 0, "catastrophic": 0.0},
+      "1e-02": {"ppl": 57.91, "kl": 0.0, "top5": 100.0, "corrected": 0, "catastrophic": 0.0}
+    }
+  }
+}

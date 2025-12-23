@@ -1,0 +1,67 @@
+================================================================================
+ICML EVALUATION
+================================================================================
+Model: gpt2
+Dataset: wikitext2
+Max samples: 50
+Seeds: 1
+Downstream: False
+GPU: NVIDIA A100 80GB PCIe
+Date: 2025-12-21
+================================================================================
+
+====================================================================================================
+PERPLEXITY RESULTS: gpt2 on wikitext2
+====================================================================================================
+Cache Mode                | BER=0e+00 | BER=1e-06 | BER=1e-05 | BER=1e-04 | BER=1e-03 | BER=1e-02 |
+---------------------------------------------------------------------------------------------------
+fp16                      |      56.20 |      56.20 |      56.20 |      56.20 |      56.20 |      56.20 |
+int4                      |      56.20 |      58.71 |      70.01 |    1126.00 |   98195.63 |  831543.82 |
+int4-hamming              |      57.94 |      57.94 |      57.94 |      57.94 |      57.82 |      62.91 |
+int4-hamming84            |      57.94 |      57.94 |      57.94 |      57.95 |      58.09 |      82.58 |
+int4-hamming84-interp     |      57.94 |      57.94 |      57.94 |      57.95 |      58.09 |      82.58 |
+int12-golay               |      57.94 |      57.94 |      57.94 |      57.94 |      57.94 |      57.91 |
+
+====================================================================================================
+ERROR CORRECTION & QUALITY METRICS
+====================================================================================================
+
+int4:
+  BER=0e+00: PPL=56.20±0.00, KL=0.0000, Top5=100.00%, Corrected=0, Catastrophic=0.00%
+  BER=1e-06: PPL=58.71±0.00, KL=0.0000, Top5=100.00%, Corrected=0, Catastrophic=0.00%
+  BER=1e-05: PPL=70.01±0.00, KL=0.0000, Top5=100.00%, Corrected=0, Catastrophic=0.00%
+  BER=1e-04: PPL=1126.00±0.00, KL=0.0000, Top5=100.00%, Corrected=0, Catastrophic=32.00%
+  BER=1e-03: PPL=98195.63±0.00, KL=0.0000, Top5=100.00%, Corrected=0, Catastrophic=100.00%
+  BER=1e-02: PPL=831543.82±0.00, KL=0.0000, Top5=100.00%, Corrected=0, Catastrophic=100.00%
+
+int4-hamming:
+  BER=0e+00: PPL=57.94±0.00, KL=0.0000, Top5=100.00%, Corrected=0, Catastrophic=0.00%
+  BER=1e-06: PPL=57.94±0.00, KL=0.0000, Top5=100.00%, Corrected=492, Catastrophic=0.00%
+  BER=1e-05: PPL=57.94±0.00, KL=0.0000, Top5=100.00%, Corrected=8004, Catastrophic=0.00%
+  BER=1e-04: PPL=57.94±0.00, KL=0.0000, Top5=100.00%, Corrected=82704, Catastrophic=0.00%
+  BER=1e-03: PPL=57.82±0.00, KL=0.0000, Top5=100.00%, Corrected=834276, Catastrophic=0.00%
+  BER=1e-02: PPL=62.91±0.00, KL=0.0000, Top5=100.00%, Corrected=8062692, Catastrophic=0.00%
+
+int4-hamming84:
+  BER=0e+00: PPL=57.94±0.00, KL=0.0000, Top5=100.00%, Corrected=0, Catastrophic=0.00%
+  BER=1e-06: PPL=57.94±0.00, KL=0.0000, Top5=100.00%, Corrected=492, Catastrophic=0.00%
+  BER=1e-05: PPL=57.94±0.00, KL=0.0000, Top5=100.00%, Corrected=8004, Catastrophic=0.00%
+  BER=1e-04: PPL=57.95±0.00, KL=0.0000, Top5=100.00%, Corrected=82680, Catastrophic=0.00%
+  BER=1e-03: PPL=58.09±0.00, KL=0.0000, Top5=100.00%, Corrected=830880, Catastrophic=0.00%
+  BER=1e-02: PPL=82.58±0.00, KL=0.0000, Top5=100.00%, Corrected=7755204, Catastrophic=0.00%
+
+int4-hamming84-interp:
+  BER=0e+00: PPL=57.94±0.00, KL=0.0000, Top5=100.00%, Corrected=0, Catastrophic=0.00%
+  BER=1e-06: PPL=57.94±0.00, KL=0.0000, Top5=100.00%, Corrected=492, Catastrophic=0.00%
+  BER=1e-05: PPL=57.94±0.00, KL=0.0000, Top5=100.00%, Corrected=8004, Catastrophic=0.00%
+  BER=1e-04: PPL=57.95±0.00, KL=0.0000, Top5=100.00%, Corrected=82680, Catastrophic=0.00%
+  BER=1e-03: PPL=58.09±0.00, KL=0.0000, Top5=100.00%, Corrected=830880, Catastrophic=0.00%
+  BER=1e-02: PPL=82.58±0.00, KL=0.0000, Top5=100.00%, Corrected=7755204, Catastrophic=0.00%
+
+int12-golay:
+  BER=0e+00: PPL=57.94±0.00, KL=0.0000, Top5=100.00%, Corrected=0, Catastrophic=0.00%
+  BER=1e-06: PPL=57.94±0.00, KL=0.0000, Top5=100.00%, Corrected=0, Catastrophic=0.00%
+  BER=1e-05: PPL=57.94±0.00, KL=0.0000, Top5=100.00%, Corrected=0, Catastrophic=0.00%
+  BER=1e-04: PPL=57.94±0.00, KL=0.0000, Top5=100.00%, Corrected=0, Catastrophic=0.00%
+  BER=1e-03: PPL=57.94±0.00, KL=0.0000, Top5=100.00%, Corrected=0, Catastrophic=0.00%
+  BER=1e-02: PPL=57.91±0.00, KL=0.0000, Top5=100.00%, Corrected=0, Catastrophic=0.00%

@@ -3,3 +3,14 @@ numpy>=1.21.0
 pytest>=7.0.0
 transformers>=4.30.0
 datasets>=2.14.0
+torchmetrics>=1.0.0
+
+# Statistical analysis (arXiv-quality)
+scipy>=1.10.0
+statsmodels>=0.14.0
+
+# Generation quality metrics
+evaluate>=0.4.0
+rouge-score>=0.1.2
+bert-score>=0.3.13
+sacrebleu>=2.3.0

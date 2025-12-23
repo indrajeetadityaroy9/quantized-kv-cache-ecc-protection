@@ -20,3 +20,6 @@ htmlcov/
 .modal/
 .DS_Store
 Thumbs.db
+MODAL_DISTRIBUTED_TRAINING_GUIDE.md
+modal_runner.py
+paper_draft.tex

@@ -9,35 +9,124 @@ import modal
 app = modal.App("hamming74-experiments")
 hf_secret = modal.Secret.from_name("huggingface-secret")
 
-image = (
-    modal.Image.debian_slim(python_version="3.11")
+# =============================================================================
+# vLLM Image Build with Layer Caching Optimization
+# =============================================================================
+# Structure:
+#   Layer 1 (base_image): Base dependencies - cached until deps change
+#   Layer 2 (build_image): CUDA compilation - cached until csrc/ changes
+#   Layer 3 (image): Python source - fast to update, no recompilation
+#
+# Expected build times:
+#   - Full rebuild (csrc/ changed): ~20-30 min
+#   - Python-only change (vllm/*.py): ~2-3 min (cached build layer)
+#   - Evaluation code change: ~1-2 min (cached build layer)
+# =============================================================================
+
+# Layer 1: Base image with all dependencies (rarely changes)
+base_image = (
+    modal.Image.from_registry(
+        "pytorch/pytorch:2.4.0-cuda12.4-cudnn9-devel",
+    )
+    .apt_install("git", "build-essential", "ninja-build", "ccache")
     .pip_install(
-        "torch>=2.0.0",
-        "triton>=2.1.0",
-        "numpy>=1.21.0",
-        "pytest>=7.0.0",
-        "transformers>=4.40.0,<4.45.0",
+        # vLLM build dependencies
+        "setuptools>=61",
+        "setuptools-scm>=8",
+        "wheel",
+        "packaging",
+        "ninja",
+        "jinja2",
+        # vLLM runtime dependencies
+        "transformers>=4.40.0",
         "datasets>=2.14.0",
         "accelerate",
         "huggingface-hub",
-        "matplotlib",
+        "torchmetrics>=1.0.0",
+        "scipy>=1.10.0",
+        "statsmodels>=0.14.0",
+        "ray>=2.9.0",
+        "sentencepiece",
+        "tiktoken",
+        "triton>=2.1.0",
+        "xformers",
+        "filelock",
+        "fastapi",
+        "uvicorn",
+        "pydantic>=2.0",
+        "prometheus-client",
+        "py-cpuinfo",
+        "aiohttp",
+        "openai",
+        "lm-format-enforcer",
+        "outlines",
+        "compressed-tensors",
+        "gguf",
+        "mistral_common",
+        "pynvml",
+        "msgspec",
+        "pytest>=7.0.0",
     )
-    .add_local_dir(".", remote_path="/app")
 )
 
-vllm_image = (
-    modal.Image.debian_slim(python_version="3.11")
-    .pip_install(
-        "torch>=2.0.0",
-        "triton>=2.1.0",
-        "vllm>=0.6.0",
-        "numpy>=1.21.0",
-        "transformers>=4.40.0,<4.45.0",
-        "datasets>=2.14.0",
-        "accelerate",
-        "huggingface-hub",
+# Layer 2: Build vLLM C extensions (cached until csrc/ or build config changes)
+# Only copies build-essential files to maximize cache hit rate
+build_image = (
+    base_image
+    # Copy CUDA sources (ECC kernels) - changes trigger recompilation
+    .add_local_dir("vllm-main/csrc", remote_path="/app/vllm-main/csrc", copy=True)
+    # Copy CMake config
+    .add_local_dir("vllm-main/cmake", remote_path="/app/vllm-main/cmake", copy=True)
+    # Copy build configuration files (copy=True required for run_commands after)
+    .add_local_file("vllm-main/setup.py", "/app/vllm-main/setup.py", copy=True)
+    .add_local_file("vllm-main/pyproject.toml", "/app/vllm-main/pyproject.toml", copy=True)
+    .add_local_file("vllm-main/CMakeLists.txt", "/app/vllm-main/CMakeLists.txt", copy=True)
+    .add_local_file("vllm-main/use_existing_torch.py", "/app/vllm-main/use_existing_torch.py", copy=True)
+    # Copy requirements directory (needed by setup.py)
+    .add_local_dir("vllm-main/requirements", remote_path="/app/vllm-main/requirements", copy=True)
+    # Copy vllm/envs.py (required by setup.py during build)
+    .add_local_file("vllm-main/vllm/envs.py", "/app/vllm-main/vllm/envs.py", copy=True)
+    # Create minimal vllm/__init__.py placeholder for setuptools package discovery
+    .run_commands(
+        "echo '__version__ = \"0.6.4.post1\"' > /app/vllm-main/vllm/__init__.py && "
+        "echo '' > /app/vllm-main/vllm/py.typed"
     )
-    .add_local_dir(".", remote_path="/app")
+    # Build vLLM from source with ECC kernels (CUDA compilation happens here)
+    # Optimized for A100 (sm_80) only - significantly reduces compile time
+    #
+    # Build optimizations:
+    # - TORCH_CUDA_ARCH_LIST=8.0: Only build for A100 (sm_80)
+    #   - Skips: FlashMLA, QuTLASS, FA3, Machete, scaled_mm_c3x,
+    #     sparse kernels, W4A8, NVFP4 (all require sm_90+ or sm_100+)
+    # - MAX_JOBS=12: Matches A100 Modal instance vCPU count
+    # - NVCC_THREADS=8: Increased parallelism for template instantiation
+    # - CMAKE_BUILD_TYPE=Release: Enable compiler optimizations
+    .run_commands(
+        "cd /app/vllm-main && pip install . --no-build-isolation -v",
+        env={
+            "TORCH_CUDA_ARCH_LIST": "8.0",
+            "CMAKE_ARGS": "-DCMAKE_CUDA_ARCHITECTURES=80",
+            "CMAKE_BUILD_TYPE": "Release",
+            "MAX_JOBS": "12",
+            "NVCC_THREADS": "8",
+            "VERBOSE": "1",
+            "SETUPTOOLS_SCM_PRETEND_VERSION": "0.6.4.post1",
+        },
+        gpu="A100-80GB",
+    )
+)
+
+# Layer 3: Add Python source and evaluation code (changes frequently, no recompilation)
+image = (
+    build_image
+    # Copy the REAL vllm/ Python source (overwrites placeholder)
+    .add_local_dir("vllm-main/vllm", remote_path="/app/vllm-main/vllm", copy=True)
+    # Reinstall as editable to pick up Python source (fast, no C++ rebuild)
+    .run_commands(
+        "cd /app/vllm-main && pip install -e . --no-build-isolation --no-deps"
+    )
+    # Add evaluation code
+    .add_local_dir("evaluation", remote_path="/app/evaluation", copy=True)
 )
 
 model_cache = modal.Volume.from_name("hamming74-model-cache", create_if_missing=True)
@@ -46,7 +135,7 @@ output_volume = modal.Volume.from_name("hamming74-results", create_if_missing=Tr
 
 @app.function(
     image=image,
-    gpu="T4",
+    gpu="A100-80GB",  # Must match build target (sm_80)
     timeout=1800,
     volumes={"/cache": model_cache},
 )
@@ -71,47 +160,6 @@ def run_llama_tests(test_file=None, verbose=True):
     os.environ["TRANSFORMERS_CACHE"] = "/cache/huggingface"
     from evaluation.runners.modal import run_tests_impl
     return run_tests_impl(test_file=test_file, verbose=verbose)
-
-
-@app.function(
-    image=image,
-    gpu="T4",
-    timeout=600,
-    volumes={"/cache": model_cache},
-)
-def quick_verify():
-    os.chdir("/app")
-    sys.path.insert(0, "/app")
-    from evaluation.runners.modal import quick_verify_impl
-    return quick_verify_impl()
-
-
-@app.function(
-    image=image,
-    gpu="T4",
-    timeout=600,
-    volumes={"/cache": model_cache},
-)
-def verify_quantization():
-    """Verify all quantization backends work correctly."""
-    os.chdir("/app")
-    sys.path.insert(0, "/app")
-    from evaluation.runners.modal import verify_quantization_backends_impl
-    return verify_quantization_backends_impl()
-
-
-@app.function(
-    image=image,
-    gpu="T4",
-    timeout=1800,
-    volumes={"/cache": model_cache},
-)
-def run_quantization_ecc_comparison():
-    """Run comprehensive quantization × ECC comparison benchmark."""
-    os.chdir("/app")
-    sys.path.insert(0, "/app")
-    from evaluation.experiments.quantization_ecc_comparison import run_benchmark_impl
-    return run_benchmark_impl()
 
 
 @app.function(
@@ -179,583 +227,247 @@ def get_results(run_name):
 
 
 @app.function(
-    image=vllm_image,
+    image=image,
     gpu="A100-80GB",
-    timeout=7200,
+    timeout=14400,
     volumes={"/cache": model_cache, "/output": output_volume},
     secrets=[hf_secret],
 )
-def run_vllm_comparison(
-    model_name="TinyLlama/TinyLlama-1.1B-Chat-v1.0",
-    batch_sizes=None,
-    seq_lengths=None,
-    num_samples=100,
-    compute_perplexity=True,
-    save_to_volume=True,
+def run_evaluation(
+    model_name: str = "gpt2",
+    dataset: str = "wikitext2",
+    max_samples: int = 50,
+    num_seeds: int = 3,
+    save_to_volume: bool = True,
+    cache_modes: list = None,
+    ber_levels: list = None,
+    ecc_sweep: bool = False,
 ):
-    """Run vLLM vs ECC-protected KV cache comparison benchmark."""
-    os.chdir("/app")
-    sys.path.insert(0, "/app")
-    os.environ["HF_HOME"] = "/cache/huggingface"
-    os.environ["TRANSFORMERS_CACHE"] = "/cache/huggingface"
+    """Run evaluation using vLLM backend with ECC-protected KV cache.
 
-    from evaluation.experiments.fault_tolerance_benchmark import (
-        VLLMComparisonConfig,
-        run_full_comparison,
-    )
+    Args:
+        model_name: Model identifier (gpt2, llama-3.1-8b, mistral-7b, etc.)
+        dataset: Dataset name (wikitext2, c4, ptb)
+        max_samples: Number of evaluation samples
+        num_seeds: Number of random seeds for statistical rigor
+        save_to_volume: Whether to save results to Modal volume
+        cache_modes: List of cache modes to test
+        ber_levels: List of BER levels for fault injection
+        ecc_sweep: If True, run full ECC comparison sweep
 
-    if batch_sizes is None:
-        batch_sizes = [1, 4, 8]
-    if seq_lengths is None:
-        seq_lengths = [512, 1024]
-
-    config = VLLMComparisonConfig(
-        model_name=model_name,
-        batch_sizes=batch_sizes,
-        seq_lengths=seq_lengths,
-        num_samples=num_samples,
-        compute_perplexity=compute_perplexity,
-    )
-
-    def progress(msg, curr, total):
-        print(f"[{curr}/{total}] {msg}")
-
-    report = run_full_comparison(config, progress)
-
-    print("\n" + report.get_full_report())
-
-    if save_to_volume:
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        output_path = f"/output/vllm_comparison_{timestamp}"
-        os.makedirs(output_path, exist_ok=True)
-
-        with open(f"{output_path}/results.json", "w") as f:
-            json.dump(report.to_dict(), f, indent=2)
-
-        with open(f"{output_path}/summary.txt", "w") as f:
-            f.write(report.get_full_report())
-
-        with open(f"{output_path}/throughput_table.md", "w") as f:
-            f.write("# vLLM vs ECC Throughput Comparison\n\n")
-            f.write(report.get_throughput_table())
-            f.write("\n\n")
-            f.write(report.get_overhead_table())
-
-        with open(f"{output_path}/quality_table.md", "w") as f:
-            f.write("# Quality Comparison\n\n")
-            f.write(report.get_perplexity_table())
-            f.write("\n\n")
-            f.write(report.get_memory_table())
-
-        output_volume.commit()
-        print(f"\nResults saved to: {output_path}")
-        print(f"To download: modal volume get hamming74-results vllm_comparison_{timestamp} ./results/")
-
-    return report.to_dict()
-
-
-@app.function(
-    image=vllm_image,
-    gpu="A100-80GB",
-    timeout=10800,  # 3 hours - BER sweep takes longer
-    volumes={"/cache": model_cache, "/output": output_volume},
-    secrets=[hf_secret],
-)
-def run_ber_sweep(
-    model_name="TinyLlama/TinyLlama-1.1B-Chat-v1.0",
-    ber_levels=None,
-    perplexity_samples=50,
-    save_to_volume=True,
-):
-    """
-    Run BER sweep comparison: vLLM (unprotected) vs ECC-protected.
-
-    Demonstrates how vanilla vLLM degrades with bit errors while
-    ECC-protected configurations maintain quality.
+    Returns:
+        Dict with sweep results including perplexity and error correction stats
     """
     os.chdir("/app")
     sys.path.insert(0, "/app")
     os.environ["HF_HOME"] = "/cache/huggingface"
     os.environ["TRANSFORMERS_CACHE"] = "/cache/huggingface"
 
-    from evaluation.experiments.fault_tolerance_benchmark import run_ber_sweep_impl
+    import torch
+    from evaluation.metrics import load_dataset_by_name
+    from evaluation.sweep import SweepConfig, run_sweep
+    from evaluation.constants import ICML_CONFIG
 
+    # Full ECC sweep mode with all cache modes and BER levels from ICML_CONFIG
+    if ecc_sweep:
+        cache_modes = ICML_CONFIG["cache_modes"]  # Uses constants.py definition
+        ber_levels = ICML_CONFIG["ber_levels"]
+
+    # Defaults
+    if cache_modes is None:
+        cache_modes = ["fp16"]
     if ber_levels is None:
-        ber_levels = [0.0, 1e-4, 1e-3, 1e-2]
+        ber_levels = [0]
 
-    results = run_ber_sweep_impl(
-        model_name=model_name,
+    print("=" * 80)
+    print("ECC-PROTECTED KV CACHE EVALUATION")
+    print("=" * 80)
+    print(f"Model: {model_name}")
+    print(f"Dataset: {dataset}")
+    print(f"Cache modes: {cache_modes}")
+    print(f"BER levels: {ber_levels}")
+    print(f"Max samples: {max_samples}")
+    print(f"Seeds: {num_seeds}")
+    print(f"GPU: {torch.cuda.get_device_name(0)}")
+    print("=" * 80)
+
+    # Load dataset
+    print(f"\nLoading {dataset} dataset...")
+    texts = load_dataset_by_name(dataset, max_samples=max_samples)
+    print(f"Loaded {len(texts)} samples")
+
+    # Configure sweep
+    seeds = ICML_CONFIG["seeds"][:num_seeds]
+    config = SweepConfig(
+        cache_modes=cache_modes,
         ber_levels=ber_levels,
-        perplexity_samples=perplexity_samples,
+        seeds=seeds,
+        aggregate_seeds=True,
+        max_length=ICML_CONFIG["max_length"],
+        stride=ICML_CONFIG["stride"],
+        max_samples=max_samples,
+        block_size=32,
+        device="cuda",
+        compute_kl_divergence=False,
+        compute_top5=False,
+        compute_catastrophic=True,
+        catastrophic_threshold=1000.0,
     )
 
+    # Run sweep using vLLM backend
+    def progress_callback(msg, current, total):
+        print(f"[{current+1}/{total}] {msg}")
+
+    print("\nRunning perplexity sweep (vLLM backend)...")
+    results = run_sweep(model_name, texts, config, progress_callback)
+
+    # Format results
+    output_lines = []
+    output_lines.append("\n" + "=" * 100)
+    output_lines.append(f"PERPLEXITY RESULTS (vLLM): {model_name} on {dataset}")
+    output_lines.append("=" * 100)
+
+    header = f"{'Cache Mode':<25} |"
+    for ber in config.ber_levels:
+        header += f" BER={ber:.0e} |"
+    output_lines.append(header)
+    output_lines.append("-" * len(header))
+
+    for mode in config.cache_modes:
+        row = f"{mode:<25} |"
+        for ber in config.ber_levels:
+            agg = results.get_aggregated(mode, ber)
+            if agg:
+                row += f" {agg.ppl_mean:>10.2f} |"
+            else:
+                row += f" {'N/A':>10} |"
+        output_lines.append(row)
+
+    output_lines.append("")
+    output_lines.append("=" * 100)
+    output_lines.append("ERROR CORRECTION STATS (vLLM C++ Kernels)")
+    output_lines.append("=" * 100)
+
+    for mode in config.cache_modes:
+        if mode == "fp16":
+            continue
+        output_lines.append(f"\n{mode}:")
+        for ber in config.ber_levels:
+            agg = results.get_aggregated(mode, ber)
+            if agg:
+                output_lines.append(
+                    f"  BER={ber:.0e}: PPL={agg.ppl_mean:.2f}+/-{agg.ppl_std:.2f}, "
+                    f"Corrected={agg.errors_corrected_mean:.0f}, "
+                    f"Catastrophic={agg.catastrophic_rate_mean:.2%}"
+                )
+
+    output_text = "\n".join(output_lines)
+    print(output_text)
+
+    # Build results dict
+    results_dict = {
+        "backend": "vllm",
+        "config": {
+            "model_name": model_name,
+            "dataset": dataset,
+            "max_samples": max_samples,
+            "seeds": seeds,
+            "cache_modes": config.cache_modes,
+            "ber_levels": config.ber_levels,
+        },
+        "aggregated": {},
+        "trials": [],
+    }
+
+    # Save raw trial data
+    for trial in results.trials:
+        results_dict["trials"].append({
+            "cache_mode": trial.cache_mode,
+            "ber": trial.ber,
+            "seed": trial.seed,
+            "perplexity": trial.perplexity,
+            "errors_corrected": trial.errors_corrected,
+            "errors_detected": trial.errors_detected,
+            "total_values": trial.total_values,
+            "catastrophic_rate": trial.catastrophic_rate,
+        })
+
+    # Save aggregated results
+    for mode in config.cache_modes:
+        results_dict["aggregated"][mode] = {}
+        for ber in config.ber_levels:
+            agg = results.get_aggregated(mode, ber)
+            if agg:
+                results_dict["aggregated"][mode][str(ber)] = {
+                    "ppl_mean": agg.ppl_mean,
+                    "ppl_std": agg.ppl_std,
+                    "errors_corrected_mean": agg.errors_corrected_mean,
+                    "errors_detected_mean": agg.errors_detected_mean,
+                    "total_values": agg.total_values,
+                    "catastrophic_rate_mean": agg.catastrophic_rate_mean,
+                    "catastrophic_rate_std": agg.catastrophic_rate_std,
+                    "n_trials": agg.n_trials,
+                }
+
+    # Save results
     if save_to_volume:
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        output_path = f"/output/ber_sweep_{timestamp}"
+        output_path = f"/output/eval_{model_name}_{dataset}_{timestamp}"
         os.makedirs(output_path, exist_ok=True)
-
-        with open(f"{output_path}/results.json", "w") as f:
-            json.dump(results, f, indent=2)
-
-        with open(f"{output_path}/ber_sweep_table.txt", "w") as f:
-            f.write(results.get("formatted_table", "No table"))
 
         with open(f"{output_path}/summary.txt", "w") as f:
-            f.write("=" * 80 + "\n")
-            f.write("BER SWEEP: vLLM vs ECC-Protected KV Cache\n")
-            f.write("=" * 80 + "\n\n")
-            f.write(f"Model: {model_name}\n")
-            f.write(f"BER levels: {ber_levels}\n")
-            f.write(f"Perplexity samples: {perplexity_samples}\n\n")
-            f.write(results.get("formatted_table", "No table"))
-
-        output_volume.commit()
-        print(f"\nResults saved to: {output_path}")
-        print(f"To download: modal volume get hamming74-results ber_sweep_{timestamp} ./results/")
-
-    return results
-
-
-@app.function(
-    image=image,
-    gpu="A100-80GB",
-    timeout=3600,
-    volumes={"/cache": model_cache, "/output": output_volume},
-)
-def run_latency_benchmark(n_iterations=100, save_to_volume=True):
-    os.chdir("/app")
-    sys.path.insert(0, "/app")
-    from evaluation.experiments.latency import CodecBenchmarkConfig, run_codec_benchmarks
-
-    config = CodecBenchmarkConfig(
-        tensor_sizes=[
-            (1, 256, 768),
-            (8, 256, 768),
-            (1, 1024, 768),
-            (1, 256, 4096),
-            (8, 256, 4096),
-            (1, 1024, 4096),
-            (32, 512, 4096),
-        ],
-        n_iterations=n_iterations,
-        codecs=["int4", "int4-hamming", "int4-hamming84", "int12-golay"],
-    )
-
-    def progress(msg, curr, total):
-        print(f"[{curr+1}/{total}] {msg}")
-
-    report = run_codec_benchmarks(config, progress)
-
-    print(report.get_summary_table())
-
-    if save_to_volume:
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        output_path = f"/output/latency_benchmark_{timestamp}"
-        os.makedirs(output_path, exist_ok=True)
-
-        json_file = f"{output_path}/results.json"
-        with open(json_file, "w") as f:
-            json.dump(report.to_dict(), f, indent=2)
-        print(f"\nResults saved to volume: {json_file}")
-
-        summary_file = f"{output_path}/summary.txt"
-        with open(summary_file, "w") as f:
-            f.write(report.get_summary_table())
-        print(f"Summary saved to volume: {summary_file}")
-
-        output_volume.commit()
-        print(f"To download: modal volume get hamming74-results latency_benchmark_{timestamp} ./results/")
-
-    return report.to_dict()
-
-
-@app.function(
-    image=image,
-    gpu="A100-80GB",
-    timeout=3600,
-    volumes={"/cache": model_cache, "/output": output_volume},
-    secrets=[hf_secret],
-)
-def run_triton_worker(model_name, mode, ber, seed, max_samples):
-    os.chdir("/app")
-    sys.path.insert(0, "/app")
-    os.environ["HF_HOME"] = "/cache/huggingface"
-    os.environ["TRANSFORMERS_CACHE"] = "/cache/huggingface"
-    from evaluation.runners.triton_eval import run_single_triton_trial
-    return run_single_triton_trial(model_name, mode, ber, seed, max_samples)
-
-
-@app.function(
-    image=image,
-    gpu="A100-80GB",
-    timeout=3600,
-    volumes={"/cache": model_cache, "/output": output_volume},
-)
-def run_kernel_benchmarks(
-    batch_sizes=None,
-    seq_lens=None,
-    num_heads=32,
-    head_dim=128,
-    warmup=10,
-    repeat=50,
-    save_to_volume=True,
-):
-    os.chdir("/app")
-    sys.path.insert(0, "/app")
-    from kv_cache.benchmark_harness import run_attention_benchmark_suite
-
-    if batch_sizes is None:
-        batch_sizes = [1, 4, 16]
-    if seq_lens is None:
-        seq_lens = [128, 512, 2048]
-
-    print("=" * 70)
-    print("ATTENTION KERNEL LATENCY BENCHMARKS")
-    print("=" * 70)
-    print(f"Batch sizes: {batch_sizes}")
-    print(f"Sequence lengths: {seq_lens}")
-    print(f"num_heads={num_heads}, head_dim={head_dim}")
-    print(f"warmup={warmup}, repeat={repeat}")
-    print("=" * 70)
-
-    results = run_attention_benchmark_suite(
-        batch_sizes=batch_sizes,
-        seq_lens=seq_lens,
-        num_heads=num_heads,
-        head_dim=head_dim,
-        warmup=warmup,
-        repeat=repeat,
-    )
-
-    results_dict = [r.__dict__ if hasattr(r, "__dict__") else r for r in results]
-
-    if save_to_volume:
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        output_path = f"/output/kernel_benchmark_{timestamp}"
-        os.makedirs(output_path, exist_ok=True)
+            f.write(output_text)
 
         with open(f"{output_path}/results.json", "w") as f:
-            json.dump({"attention_benchmarks": results_dict}, f, indent=2)
-
-        with open(f"{output_path}/latency_table.md", "w") as f:
-            f.write("# Attention Kernel Latency Results\n\n")
-            f.write("| Configuration | Latency (us) | Overhead vs Baseline |\n")
-            f.write("|---------------|--------------|---------------------|\n")
-            for r in results_dict:
-                overhead = f"{r.get('overhead_vs_baseline', 'N/A'):.2f}x" if r.get("overhead_vs_baseline") else "N/A"
-                f.write(f"| {r['name']} B={r['batch_size']} S={r['seq_len']} | {r['latency_us']:.2f} | {overhead} |\n")
+            json.dump(results_dict, f, indent=2)
 
         output_volume.commit()
         print(f"\nResults saved to: {output_path}")
 
-    return {"attention_benchmarks": results_dict}
-
-
-@app.function(
-    image=image,
-    gpu="A100-80GB",
-    timeout=21600,
-    volumes={"/cache": model_cache, "/output": output_volume},
-    secrets=[hf_secret],
-)
-def run_benchmark(
-    models="gpt2",
-    seeds=3,
-    include_generation=False,
-    generation_ber=0.05,
-    output_dir=None,
-    save_to_volume=True,
-):
-    os.chdir("/app")
-    sys.path.insert(0, "/app")
-    from evaluation.runners.modal import run_benchmark_impl
-
-    results = run_benchmark_impl(
-        models=models,
-        seeds=seeds,
-        include_generation=include_generation,
-        generation_ber=generation_ber,
-        output_dir=output_dir,
-    )
-
-    if save_to_volume:
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        output_path = f"/output/{models}_benchmark_{timestamp}"
-        os.makedirs(output_path, exist_ok=True)
-
-        json_file = f"{output_path}/results.json"
-        with open(json_file, "w") as f:
-            json.dump(results, f, indent=2)
-        print(f"\nResults saved to volume: {json_file}")
-
-        summary_file = f"{output_path}/summary.txt"
-        with open(summary_file, "w") as f:
-            f.write("=" * 70 + "\n")
-            f.write(f"BENCHMARK RESULTS: {models.upper()}\n")
-            f.write(f"Timestamp: {timestamp}\n")
-            f.write(f"Seeds: {seeds}\n")
-            f.write(f"Include Generation: {include_generation}\n")
-            f.write("=" * 70 + "\n\n")
-
-            if results.get("sweep_results"):
-                for model_key, sweep_data in results["sweep_results"].items():
-                    f.write(f"\n{model_key.upper()} SWEEP RESULTS:\n")
-                    f.write("-" * 50 + "\n")
-                    for mode, ber_results in sweep_data.items():
-                        f.write(f"\n  {mode}:\n")
-                        for ber, metrics in ber_results.items():
-                            ppl = metrics.get("ppl_mean", "N/A")
-                            ppl_std = metrics.get("ppl_std", 0)
-                            kl = metrics.get("kl_divergence_mean", "N/A")
-                            f.write(
-                                f"BER={ber}: PPL={ppl:.2f}±{ppl_std:.2f}, KL={kl:.4f}\n"
-                            )
-
-            if results.get("generation_results"):
-                f.write("\n\nGENERATION DEMO RESULTS:\n")
-                f.write("-" * 50 + "\n")
-                for gen in results["generation_results"]:
-                    f.write(f"\nPrompt: {gen.get('prompt', 'N/A')}\n")
-                    f.write(f"Mode: {gen.get('mode', 'N/A')}\n")
-                    f.write(f"Output: {gen.get('output', 'N/A')}\n")
-
-        print(f"Summary saved to volume: {summary_file}")
-
-        metrics_file = f"{output_path}/metrics.txt"
-        with open(metrics_file, "w") as f:
-            f.write("=" * 100 + "\n")
-            f.write(f"BENCHMARK METRICS: {models.upper()} | {timestamp}\n")
-            f.write("=" * 100 + "\n\n")
-
-            if results.get("sweep_results"):
-                for model_key, sweep_data in results["sweep_results"].items():
-                    f.write(f"\n{'=' * 80}\n")
-                    f.write(f"{model_key.upper()} PERPLEXITY TABLE\n")
-                    f.write(f"{'=' * 80}\n\n")
-
-                    ber_levels = []
-                    for mode_data in sweep_data.values():
-                        ber_levels = list(mode_data.keys())
-                        break
-
-                    header = f"{'Cache Mode':<25}"
-                    for ber in ber_levels:
-                        header += f" | BER={ber:>8}"
-                    f.write(header + "\n")
-                    f.write("-" * len(header) + "\n")
-
-                    for mode, ber_results in sweep_data.items():
-                        row = f"{mode:<25}"
-                        for ber in ber_levels:
-                            metrics = ber_results.get(ber, {})
-                            ppl = metrics.get("ppl_mean", 0)
-                            ppl_std = metrics.get("ppl_std", 0)
-                            row += f" | {ppl:>6.2f}±{ppl_std:<4.2f}"
-                        f.write(row + "\n")
-
-                    f.write(f"\n\n{'=' * 80}\n")
-                    f.write(f"{model_key.upper()} KL DIVERGENCE TABLE (nats)\n")
-                    f.write(f"{'=' * 80}\n\n")
-                    f.write(header + "\n")
-                    f.write("-" * len(header) + "\n")
-
-                    for mode, ber_results in sweep_data.items():
-                        row = f"{mode:<25}"
-                        for ber in ber_levels:
-                            metrics = ber_results.get(ber, {})
-                            kl = metrics.get("kl_divergence_mean", 0)
-                            row += f" | {kl:>12.4f}"
-                        f.write(row + "\n")
-
-                    f.write(f"\n\n{'=' * 80}\n")
-                    f.write(f"{model_key.upper()} TOP-5 ACCURACY TABLE (%)\n")
-                    f.write(f"{'=' * 80}\n\n")
-
-                    f.write(header + "\n")
-                    f.write("-" * len(header) + "\n")
-
-                    for mode, ber_results in sweep_data.items():
-                        row = f"{mode:<25}"
-                        for ber in ber_levels:
-                            metrics = ber_results.get(ber, {})
-                            top5 = metrics.get("top5_accuracy_mean", 0) * 100
-                            row += f" | {top5:>12.1f}"
-                    f.write(row + "\n")
-
-                    f.write(f"\n\n{'=' * 80}\n")
-                    f.write(f"{model_key.upper()} ERROR CORRECTION STATS (at max BER)\n")
-                    f.write(f"{'=' * 80}\n\n")
-
-                    max_ber = ber_levels[-1] if ber_levels else "0"
-                    f.write(f"{'Cache Mode':<25} | {'Errors Corrected':>18} | {'Errors Detected':>16}\n")
-                    f.write("-" * 65 + "\n")
-
-                    for mode, ber_results in sweep_data.items():
-                        metrics = ber_results.get(max_ber, {})
-                        corrected = metrics.get("errors_corrected", 0)
-                        detected = metrics.get("errors_detected", 0)
-                        f.write(f"{mode:<25} | {corrected:>18,.0f} | {detected:>16,.0f}\n")
-
-        print(f"Metrics saved to volume: {metrics_file}")
-        output_volume.commit()
-        print(f"To download: modal volume get hamming74-results {models}_benchmark_{timestamp} ./results/")
-
-    return results
-
-
-def format_ppl_table(results):
-    """Format perplexity results as a markdown table.
-
-    Copied from evaluation/runners/triton_eval.py to avoid GPU imports locally.
-    """
-    from collections import defaultdict
-
-    grouped = defaultdict(list)
-    for r in results:
-        key = (r["mode"], r["ber"])
-        grouped[key].append(r["ppl"])
-
-    modes = sorted(set(r["mode"] for r in results))
-    bers = sorted(set(r["ber"] for r in results))
-
-    lines = []
-    lines.append("| Protection | " + " | ".join(f"BER={b:.0e}" for b in bers) + " |")
-    lines.append("|" + "----|" * (len(bers) + 1))
-
-    for mode in modes:
-        row = f"| {mode} |"
-        for ber in bers:
-            ppls = grouped.get((mode, ber), [])
-            if ppls:
-                mean_ppl = sum(ppls) / len(ppls)
-                std_ppl = (
-                    (sum((p - mean_ppl) ** 2 for p in ppls) / len(ppls)) ** 0.5
-                    if len(ppls) > 1
-                    else 0
-                )
-                if mean_ppl > 1000:
-                    row += f" >1000 |"
-                else:
-                    row += f" {mean_ppl:.1f}+/-{std_ppl:.1f} |"
-            else:
-                row += " - |"
-        lines.append(row)
-
-    return "\n".join(lines)
-
-
-def aggregate_results(results):
-    """Aggregate results across seeds.
-
-    Copied from evaluation/runners/triton_eval.py to avoid GPU imports locally.
-    """
-    from collections import defaultdict
-    import statistics
-
-    grouped = defaultdict(list)
-    for r in results:
-        key = (r["mode"], r["ber"])
-        grouped[key].append(r)
-
-    aggregated = {}
-    for (mode, ber), trials in grouped.items():
-        ppls = [t["ppl"] for t in trials if t["ppl"] != float("inf")]
-
-        if mode not in aggregated:
-            aggregated[mode] = {}
-
-        aggregated[mode][str(ber)] = {
-            "ppl_mean": statistics.mean(ppls) if ppls else float("inf"),
-            "ppl_std": statistics.stdev(ppls) if len(ppls) > 1 else 0.0,
-            "ppl_min": min(ppls) if ppls else float("inf"),
-            "ppl_max": max(ppls) if ppls else float("inf"),
-            "num_trials": len(trials),
-            "num_valid": len(ppls),
-            "total_injection_count": sum(t.get("injection_count", 0) for t in trials),
-            "total_errors_corrected": sum(t.get("errors_corrected", 0) for t in trials),
-            "total_errors_detected": sum(t.get("errors_detected", 0) for t in trials),
-        }
-
-    return aggregated
-
-
-def save_triton_results(results, output_path):
-    os.makedirs(output_path, exist_ok=True)
-
-    with open(f"{output_path}/results.json", "w") as f:
-        json.dump(results, f, indent=2)
-
-    aggregated = aggregate_results(results)
-    with open(f"{output_path}/aggregated.json", "w") as f:
-        json.dump(aggregated, f, indent=2)
-
-    ppl_table = format_ppl_table(results)
-    with open(f"{output_path}/ppl_table.md", "w") as f:
-        f.write("# Triton ECC Perplexity Results\n\n")
-        f.write(ppl_table)
-
-    with open(f"{output_path}/summary.txt", "w") as f:
-        f.write("=" * 70 + "\n")
-        f.write("TRITON ECC PERPLEXITY SWEEP RESULTS\n")
-        f.write("=" * 70 + "\n\n")
-
-        f.write(f"Total trials: {len(results)}\n")
-        modes = set(r["mode"] for r in results)
-        bers = sorted(set(r["ber"] for r in results))
-        seeds = set(r["seed"] for r in results)
-
-        f.write(f"Modes: {', '.join(modes)}\n")
-        f.write(f"BER levels: {[f'{b:.0e}' for b in bers]}\n")
-        f.write(f"Seeds: {seeds}\n\n")
-
-        f.write("PPL Table:\n")
-        f.write(ppl_table)
-        f.write("\n\n")
-
-        for mode, mode_data in aggregated.items():
-            f.write(f"\n{mode.upper()}:\n")
-            for ber_str, stats in mode_data.items():
-                ppl_mean = stats["ppl_mean"]
-                ppl_std = stats["ppl_std"]
-                if ppl_mean > 1000:
-                    f.write(f"BER={ber_str}: PPL > 1000 (catastrophic)\n")
-                else:
-                    f.write(f"BER={ber_str}: PPL = {ppl_mean:.2f} +/- {ppl_std:.2f}\n")
+    return results_dict
 
 
 @app.local_entrypoint()
 def main(
-    test_file=None,
-    verify=False,
-    verify_quantization_flag=False,
-    compare_quant_ecc=False,
-    llama_tests=False,
-    benchmark=False,
-    models="gpt2",
-    seeds=3,
-    include_generation=False,
-    ber=0.05,
-    output=None,
-    latency=False,
-    latency_iterations=100,
-    eval_triton=False,
-    triton_model="TinyLlama/TinyLlama-1.1B-Chat-v1.0",
-    triton_seeds=3,
-    triton_samples=50,
-    benchmark_kernels=False,
-    vllm_comparison=False,
-    vllm_model="TinyLlama/TinyLlama-1.1B-Chat-v1.0",
-    vllm_batch_sizes="1,4,8",
-    vllm_seq_lengths="512,1024",
-    vllm_samples=100,
-    ber_sweep=False,
-    ber_levels="0.0,1e-4,1e-3,1e-2",
-    ber_sweep_samples=50,
-    list_results_flag=False,
-    pull_results=None,
-    pull_latest=False,
-    results_dir="./results",
+    command: str = "eval",
+    model: str = "gpt2",
+    dataset: str = "wikitext2",
+    samples: int = 50,
+    seeds: int = 3,
+    all_models: bool = False,
+    all_datasets: bool = False,
+    ecc_sweep: bool = False,
+    cache_modes: str = None,  # Comma-separated list: "fp16,int4-hamming84"
+    ber_levels: str = None,   # Comma-separated list: "0,1e-6,1e-5"
+    test_file: str = None,
+    pull_results: str = None,
+    list_results_flag: bool = False,
+    pull_latest: bool = False,
+    results_dir: str = "./results",
 ):
+    """ECC-Protected KV Cache Evaluation CLI.
+
+    Commands:
+      eval      - Run perplexity evaluation with ECC protection
+      test      - Run test suite
+
+    Eval Flags:
+      --model         Model to evaluate (default: gpt2)
+      --dataset       Dataset (default: wikitext2)
+      --samples       Number of samples (default: 50)
+      --seeds         Number of seeds (default: 3)
+      --ecc-sweep     Run full ECC comparison (fp16, hamming, golay) with BER sweep
+      --cache-modes   Comma-separated cache modes: "fp16,int4-hamming84"
+      --ber-levels    Comma-separated BER levels: "0,1e-6,1e-5,1e-4"
+
+    Examples:
+      modal run modal_runner.py --ecc-sweep                        # Full ECC comparison
+      modal run modal_runner.py --model gpt2 --samples 20          # Quick baseline
+      modal run modal_runner.py --cache-modes "fp16,int4-hamming84" --ber-levels "0,1e-5,1e-4"
+      modal run modal_runner.py --list-results-flag                # List results
+      modal run modal_runner.py --pull-latest                      # Pull latest results
+    """
+    # Handle result listing/pulling first
     if list_results_flag:
         print("\n" + "=" * 70)
         print("AVAILABLE BENCHMARK RESULTS")
@@ -772,7 +484,6 @@ def main(
             print(f"{r['name']:<45} | {files:<30} | {ts}")
 
         print(f"\nTotal: {len(results_list)} benchmark run(s)")
-        print("\nTo pull results: modal run modal_runner.py --pull-results <run_name>")
         return
 
     if pull_results or pull_latest:
@@ -814,234 +525,113 @@ def main(
             print("SUMMARY")
             print("=" * 70)
             print(result_data["files"]["summary.txt"])
-
         return
 
-    if llama_tests:
-        test_path = test_file if test_file else "tests/test_llama_integration.py"
-        return_code = run_llama_tests.remote(test_file=test_path)
-        print(f"\nLLaMA tests completed with return code: {return_code}")
+    # Handle commands
+    if command == "eval":
+        from evaluation.constants import ICML_CONFIG
 
-    elif verify:
-        result = quick_verify.remote()
-        print(f"\nVerification: {'PASSED' if result else 'FAILED'}")
+        # Determine models and datasets to evaluate
+        models = ICML_CONFIG["models"] if all_models else [model]
+        datasets = ICML_CONFIG["datasets"] if all_datasets else [dataset]
 
-    elif verify_quantization_flag:
-        print("\n" + "=" * 70)
-        print("VERIFYING QUANTIZATION BACKENDS ON GPU")
+        total = len(models) * len(datasets)
+        is_sweep = total > 1
+
+        if ecc_sweep:
+            print("\n" + "=" * 70)
+            print("ECC COMPARISON SWEEP")
+            print("=" * 70)
+            print(f"Model: {model}")
+            print(f"Dataset: {dataset}")
+            print("Cache modes: fp16, int4-hamming, int4-hamming84, int12-golay")
+            print("BER levels: 0, 1e-6, 1e-5, 1e-4, 1e-3")
+            print(f"Samples: {samples}, Seeds: {seeds}")
+            print("=" * 70)
+
+            result = run_evaluation.remote(
+                model_name=model,
+                dataset=dataset,
+                max_samples=samples,
+                num_seeds=seeds,
+                save_to_volume=True,
+                ecc_sweep=True,
+            )
+            print("\n" + "=" * 70)
+            print("ECC COMPARISON COMPLETE")
+            print("=" * 70)
+
+        elif is_sweep:
+            print("\n" + "=" * 70)
+            print("MULTI-MODEL EVALUATION SWEEP")
+            print("=" * 70)
+            print(f"Models: {models}")
+            print(f"Datasets: {datasets}")
+            print(f"Total evaluations: {total}")
+            print(f"Samples: {samples}, Seeds: {seeds}")
+            print("=" * 70)
+
+            all_results = []
+            current = 0
+
+            for m in models:
+                for d in datasets:
+                    current += 1
+                    print(f"\n[{current}/{total}] Evaluating {m} on {d}...")
+
+                    result = run_evaluation.remote(
+                        model_name=m,
+                        dataset=d,
+                        max_samples=samples,
+                        num_seeds=seeds,
+                        save_to_volume=True,
+                    )
+                    all_results.append(result)
+
+            print("\n" + "=" * 70)
+            print(f"EVALUATION COMPLETE - {len(all_results)} run(s)")
+            print("=" * 70)
+
+        else:
+            # Parse custom cache modes and BER levels if provided
+            custom_cache_modes = None
+            custom_ber_levels = None
+
+            if cache_modes:
+                custom_cache_modes = [m.strip() for m in cache_modes.split(",")]
+            if ber_levels:
+                custom_ber_levels = [float(b.strip()) for b in ber_levels.split(",")]
+
+            print("\n" + "=" * 70)
+            print(f"EVALUATION: {model} on {dataset}")
+            print("=" * 70)
+            print(f"Samples: {samples}, Seeds: {seeds}")
+            if custom_cache_modes:
+                print(f"Cache modes: {custom_cache_modes}")
+            if custom_ber_levels:
+                print(f"BER levels: {custom_ber_levels}")
+
+            result = run_evaluation.remote(
+                model_name=model,
+                dataset=dataset,
+                max_samples=samples,
+                num_seeds=seeds,
+                save_to_volume=True,
+                cache_modes=custom_cache_modes,
+                ber_levels=custom_ber_levels,
+            )
+
+            print("\n" + "=" * 70)
+            print("EVALUATION COMPLETE")
+            print("=" * 70)
+
+    elif command == "test":
         print("=" * 70)
-        result = verify_quantization.remote()
-        print(f"\nQuantization Verification: {'PASSED' if result else 'FAILED'}")
-
-    elif compare_quant_ecc:
-        print("\n" + "=" * 70)
-        print("QUANTIZATION × ECC COMPARISON BENCHMARK")
+        print("RUNNING TEST SUITE")
         print("=" * 70)
-        result = run_quantization_ecc_comparison.remote()
-
-        print("\n" + result.get("comparison_table", "No results"))
-        print("\n" + result.get("quantization_table", ""))
-
-        # Save results if output specified
-        if output:
-            os.makedirs(output, exist_ok=True)
-            with open(f"{output}/quant_ecc_comparison.json", "w") as f:
-                # Convert aggregated dict to serializable format
-                serializable = {
-                    "config": result.get("config", {}),
-                    "aggregated": result.get("aggregated", {}),
-                }
-                json.dump(serializable, f, indent=2)
-            with open(f"{output}/comparison_table.txt", "w") as f:
-                f.write(result.get("comparison_table", ""))
-                f.write("\n\n")
-                f.write(result.get("quantization_table", ""))
-            print(f"\nResults saved to: {output}")
-
-    elif latency:
-        results = run_latency_benchmark.remote(n_iterations=latency_iterations)
-        print("\n" + "=" * 70)
-        print("LATENCY BENCHMARK COMPLETE")
-        print("=" * 70)
-        print(f"\nBenchmarked {len(results.get('results', []))} configurations")
-
-    elif vllm_comparison:
-        print("\n" + "=" * 70)
-        print("vLLM vs ECC-PROTECTED KV CACHE COMPARISON")
-        print("=" * 70)
-
-        batch_sizes = [int(x) for x in vllm_batch_sizes.split(",")]
-        seq_lengths = [int(x) for x in vllm_seq_lengths.split(",")]
-        num_samples = int(vllm_samples) if isinstance(vllm_samples, str) else vllm_samples
-
-        print(f"\nModel: {vllm_model}")
-        print(f"Batch sizes: {batch_sizes}")
-        print(f"Sequence lengths: {seq_lengths}")
-        print(f"Samples: {num_samples}")
-        print("=" * 70)
-
-        results = run_vllm_comparison.remote(
-            model_name=vllm_model,
-            batch_sizes=batch_sizes,
-            seq_lengths=seq_lengths,
-            num_samples=num_samples,
-            compute_perplexity=True,
-        )
-
-        print("\n" + "=" * 70)
-        print("vLLM COMPARISON COMPLETE")
-        print("=" * 70)
-
-        if results.get("results"):
-            print(f"\nBenchmarked {len(results['results'])} configurations")
-
-    elif ber_sweep:
-        print("\n" + "=" * 70)
-        print("BER SWEEP: vLLM vs ECC-PROTECTED KV CACHE")
-        print("=" * 70)
-
-        # Parse BER levels
-        parsed_ber_levels = [float(x) for x in ber_levels.split(",")]
-        ber_sweep_samples_int = int(ber_sweep_samples) if isinstance(ber_sweep_samples, str) else ber_sweep_samples
-
-        print(f"\nModel: {vllm_model}")
-        print(f"BER levels: {parsed_ber_levels}")
-        print(f"Perplexity samples: {ber_sweep_samples_int}")
-        print("")
-        print("This benchmark compares:")
-        print("  - vLLM FP16/FP8 (unprotected, degrades with errors)")
-        print("  - ECC Hamming84/Golay (protected, corrects errors)")
-        print("=" * 70)
-
-        results = run_ber_sweep.remote(
-            model_name=vllm_model,
-            ber_levels=parsed_ber_levels,
-            perplexity_samples=ber_sweep_samples_int,
-        )
-
-        print("\n" + "=" * 70)
-        print("BER SWEEP COMPLETE")
-        print("=" * 70)
-
-        if results.get("formatted_table"):
-            print(results["formatted_table"])
-
-        if results.get("results"):
-            print(f"\nProcessed {len(results['results'])} configurations")
-
-    elif benchmark_kernels:
-        print("\n" + "=" * 70)
-        print("ATTENTION KERNEL LATENCY BENCHMARKS (TRITON)")
-        print("=" * 70)
-
-        results = run_kernel_benchmarks.remote()
-
-        print("\n" + "=" * 70)
-        print("KERNEL BENCHMARK COMPLETE")
-        print("=" * 70)
-
-        if results.get("attention_benchmarks"):
-            benchmarks = results["attention_benchmarks"]
-            print(f"\nBenchmarked {len(benchmarks)} configurations")
-
-            print("\n| Configuration | Latency (us) | Overhead |")
-            print("|---------------|--------------|----------|")
-            for r in benchmarks[:10]:
-                overhead = (
-                    f"{r.get('overhead_vs_baseline', 0):.2f}x"
-                    if r.get("overhead_vs_baseline")
-                    else "N/A"
-                )
-                print(f"| {r['name'][:25]} | {r['latency_us']:.2f} | {overhead} |")
-
-    elif eval_triton:
-        print("\n" + "=" * 70)
-        print("TRITON ECC PERPLEXITY SWEEP (PARALLEL EXECUTION)")
-        print("=" * 70)
-
-        all_modes = [
-            "fp16",
-            "int4",
-            "int4-hamming",
-            "int4-hamming84",
-            "int4-hamming84-interp",
-            "int12-golay",
-            "adaptive",
-        ]
-
-        modes = all_modes
-        bers = [0.0, 1e-4, 1e-3, 1e-2]
-        triton_seeds = int(triton_seeds) if isinstance(triton_seeds, str) else triton_seeds
-        triton_samples = int(triton_samples) if isinstance(triton_samples, str) else triton_samples
-        seed_list = [42, 101, 997][:triton_seeds]
-
-        args_list = [
-            (triton_model, mode, ber, seed, triton_samples)
-            for mode in modes
-            for ber in bers
-            for seed in seed_list
-        ]
-
-        print(f"\nModel: {triton_model}")
-        print(f"Modes: {modes}")
-        print(f"BER levels: {bers}")
-        print(f"Seeds: {seed_list}")
-        print(f"Samples per trial: {triton_samples}")
-        print(f"\nTotal trials: {len(args_list)}")
-        print("=" * 70)
-        print(f"Spawning {len(args_list)} parallel A100 jobs...")
-        print("=" * 70)
-
-        results = []
-        for res in run_triton_worker.starmap(args_list):
-            ppl_str = f"{res['ppl']:.2f}" if res["ppl"] < 1000 else ">1000"
-            print(f"[DONE] {res['mode']} @ BER={res['ber']:.0e} seed={res['seed']}: PPL={ppl_str}")
-            results.append(res)
-
-        print("\n" + "=" * 70)
-        print("TRITON PPL SWEEP COMPLETE")
-        print("=" * 70)
-
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        output_path = Path(results_dir) / f"triton_ppl_{timestamp}"
-        save_triton_results(results, str(output_path))
-
-        print(f"\nResults saved to: {output_path}")
-
-        print("\nPPL Summary:")
-        print(format_ppl_table(results))
-
-    elif benchmark:
-        results = run_benchmark.remote(
-            models=models,
-            seeds=seeds,
-            include_generation=include_generation,
-            generation_ber=ber,
-            output_dir=output,
-        )
-
-        print("\n" + "=" * 70)
-        print("BENCHMARK COMPLETE")
-        print("=" * 70)
-
-        if results.get("sweep_results"):
-            for model_key, sweep_data in results["sweep_results"].items():
-                print(f"\n{model_key.upper()} Results:")
-                for mode in list(sweep_data.keys())[:3]:
-                    mode_data = sweep_data[mode]
-
-                    if "0" in mode_data:
-                        ppl = mode_data["0"]["ppl_mean"]
-                        print(f"  {mode}: PPL={ppl:.2f} (BER=0)")
-
-        if results.get("architecture_comparison"):
-            arch = results["architecture_comparison"]
-            print(f"\nArchitecture Comparison:")
-            print(f"GPT-2: {arch['gpt2_info'].get('n_kv_projections', 'N/A')} KV projections")
-            print(f"LLaMA: {arch['llama_info'].get('n_kv_projections', 'N/A')} KV projections")
-
-        if results.get("generation_results"):
-            print(f"\nGeneration Demo: {len(results['generation_results'])} samples generated")
-    else:
         return_code = run_tests.remote(test_file=test_file)
         print(f"\nTests completed with return code: {return_code}")
+
+    else:
+        print(f"Unknown command: {command}")
+        print("Available commands: eval, test")

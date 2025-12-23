@@ -1,5 +1,6 @@
+"""Sweep configuration and results for BER evaluation using vLLM backend."""
 from dataclasses import dataclass, field
-from typing import List, Dict, Optional, Callable, Any
+from typing import List, Dict, Optional, Callable
 import torch
 
 from .constants import (
@@ -10,17 +11,11 @@ from .constants import (
     get_ber_levels,
     get_seeds,
 )
-from .metrics import (
-    compute_perplexity,
-    compute_per_sample_perplexity,
-    compute_catastrophic_rate,
-    compute_top5_accuracy,
-    compute_mean_kl_divergence,
-)
 
 
 @dataclass
 class SweepConfig:
+    """Configuration for BER sweep evaluation."""
     cache_modes: List[str] = field(default_factory=lambda: CACHE_MODE_ORDER.copy())
     ber_levels: List[float] = field(default_factory=lambda: BER_LEVELS.copy())
 
@@ -30,12 +25,14 @@ class SweepConfig:
     max_length: int = DEFAULT_CONFIG["max_length"]
     stride: int = DEFAULT_CONFIG["stride"]
 
+    max_samples: int = DEFAULT_CONFIG["max_samples"]
+
     block_size: int = DEFAULT_CONFIG["block_size"]
 
     device: str = "cuda"
 
-    compute_kl_divergence: bool = True
-    compute_top5: bool = True
+    compute_kl_divergence: bool = False  # Not supported in vLLM backend
+    compute_top5: bool = False  # Not supported in vLLM backend
     compute_catastrophic: bool = True
     catastrophic_threshold: float = 1000.0
 
@@ -44,8 +41,6 @@ class SweepConfig:
     enable_timing: bool = False
     profile_transfers: bool = True
     warmup_iterations: int = 3
-
-    backend: str = "triton"
 
     @classmethod
     def default(cls) -> "SweepConfig":
@@ -70,6 +65,7 @@ class SweepConfig:
 
 @dataclass
 class TrialResult:
+    """Result from a single trial (cache_mode + BER + seed)."""
     cache_mode: str
     ber: float
     seed: int
@@ -91,6 +87,7 @@ class TrialResult:
 
 @dataclass
 class AggregatedResult:
+    """Aggregated results across multiple seeds for a (cache_mode, BER) pair."""
     cache_mode: str
     ber: float
     ppl_mean: float
@@ -118,7 +115,7 @@ class AggregatedResult:
     is_cpu_bound: bool = True
 
     @classmethod
-    def from_trials(cls, trials: List[TrialResult]) -> "AggregatedResult":
+    def from_trials(cls, trials: List["TrialResult"]) -> "AggregatedResult":
         if not trials:
             raise ValueError("Cannot aggregate empty trial list")
 
@@ -183,6 +180,7 @@ class AggregatedResult:
 
 @dataclass
 class SweepResults:
+    """Container for all sweep results."""
     config: SweepConfig
     trials: List[TrialResult] = field(default_factory=list)
     aggregated: Dict[str, Dict[float, AggregatedResult]] = field(default_factory=dict)
@@ -203,33 +201,99 @@ class SweepResults:
         return result
 
 
-def run_single_trial(
-    model,
-    tokenizer,
+def _run_vllm_trial(
+    model_name: str,
     texts: List[str],
     cache_mode: str,
     ber: float,
     seed: int,
     config: SweepConfig,
 ) -> TrialResult:
-    return _run_single_trial_triton(
-        model=model,
-        tokenizer=tokenizer,
-        texts=texts,
+    """Run a single trial using vLLM backend.
+
+    Args:
+        model_name: HuggingFace model name or path.
+        texts: List of text samples.
+        cache_mode: Cache mode (fp16, int4, int4-hamming, etc.).
+        ber: Bit error rate.
+        seed: Random seed.
+        config: SweepConfig with parameters.
+
+    Returns:
+        TrialResult with perplexity and error stats.
+    """
+    from evaluation.runners.vllm_runner import VLLMEvaluationRunner
+
+    torch.manual_seed(seed)
+
+    runner = VLLMEvaluationRunner(
+        model_name=model_name,
+        cache_mode=cache_mode,
+        device=config.device,
+    )
+
+    # Reset stats before computation
+    runner.reset_stats()
+
+    # Compute perplexity (KV cache populated during inference)
+    ppl = runner.compute_perplexity(
+        texts,
+        max_length=config.max_length,
+        stride=config.stride,
+    )
+
+    # Inject errors if BER > 0 (only for ECC modes, not fp16)
+    if ber > 0 and cache_mode != "fp16":
+        runner.inject_errors(ber, seed)
+        # Recompute with corrupted cache
+        ppl = runner.compute_perplexity(
+            texts,
+            max_length=config.max_length,
+            stride=config.stride,
+        )
+
+    stats = runner.get_error_stats()
+
+    return TrialResult(
         cache_mode=cache_mode,
         ber=ber,
         seed=seed,
-        config=config,
+        perplexity=ppl,
+        errors_corrected=stats.get("total_corrected", 0),
+        errors_detected=stats.get("total_uncorrectable", 0),
+        total_values=stats.get("golay_total_triplets", 0) + stats.get("hamming_total_values", 0),
     )
 
 
 def run_sweep(
-    model,
-    tokenizer,
+    model_name: str,
     texts: List[str],
     config: SweepConfig = None,
     progress_callback: Callable[[str, int, int], None] = None,
 ) -> SweepResults:
+    """Run BER sweep using vLLM C++ backend.
+
+    This function uses vLLM's offline inference API for evaluation,
+    which provides better performance through fused CUDA kernels and
+    proper paged attention with integrated ECC encode/decode.
+
+    Args:
+        model_name: HuggingFace model name or path (e.g., "gpt2", "meta-llama/Llama-3.1-8B").
+        texts: List of text samples for perplexity evaluation.
+        config: SweepConfig with parameters.
+        progress_callback: Optional callback(message, current, total) for progress reporting.
+
+    Returns:
+        SweepResults with all trial results and aggregations.
+
+    Example:
+        >>> config = SweepConfig(
+        ...     cache_modes=["fp16", "int4-hamming84", "int4-golay-hybrid"],
+        ...     ber_levels=[0, 1e-6, 1e-5],
+        ...     seeds=[42, 101],
+        ... )
+        >>> results = run_sweep("gpt2", texts, config)
+    """
     if config is None:
         config = SweepConfig.default()
 
@@ -245,14 +309,13 @@ def run_sweep(
             for seed in config.seeds:
                 if progress_callback:
                     progress_callback(
-                        f"{cache_mode} @ BER={ber:.0e} seed={seed}",
+                        f"vLLM: {cache_mode} @ BER={ber:.0e} seed={seed}",
                         current,
                         total,
                     )
 
-                trial = run_single_trial(
-                    model=model,
-                    tokenizer=tokenizer,
+                trial = _run_vllm_trial(
+                    model_name=model_name,
                     texts=texts,
                     cache_mode=cache_mode,
                     ber=ber,
@@ -275,20 +338,31 @@ def run_sweep(
 
 
 def run_sweep_single_seed(
-    model,
-    tokenizer,
+    model_name: str,
     texts: List[str],
     config: SweepConfig = None,
     seed: int = 42,
     progress_callback: Callable[[str, int, int], None] = None,
 ) -> Dict[str, Dict[float, TrialResult]]:
+    """Run sweep with a single seed, returning results indexed by mode and BER.
+
+    Args:
+        model_name: HuggingFace model name or path.
+        texts: List of text samples.
+        config: SweepConfig with parameters.
+        seed: Random seed to use.
+        progress_callback: Optional callback(message, current, total).
+
+    Returns:
+        Dict mapping cache_mode -> ber -> TrialResult.
+    """
     if config is None:
         config = SweepConfig.default()
 
     config.seeds = [seed]
     config.aggregate_seeds = False
 
-    full_results = run_sweep(model, tokenizer, texts, config, progress_callback)
+    full_results = run_sweep(model_name, texts, config, progress_callback)
 
     results: Dict[str, Dict[float, TrialResult]] = {}
     for trial in full_results.trials:
@@ -297,183 +371,3 @@ def run_sweep_single_seed(
         results[trial.cache_mode][trial.ber] = trial
 
     return results
-
-
-def _run_single_trial_triton(
-    model,
-    tokenizer,
-    texts: List[str],
-    cache_mode: str,
-    ber: float,
-    seed: int,
-    config: SweepConfig,
-) -> TrialResult:
-    import torch
-    from kv_cache.ecc_shim import (
-        ECCShimConfig,
-        patch_model_with_ecc_attention,
-        reset_ecc_cache,
-        get_ecc_stats,
-    )
-    from evaluation.metrics import (
-        compute_top5_accuracy,
-        compute_per_sample_perplexity,
-        compute_catastrophic_rate,
-        compute_mean_kl_divergence,
-    )
-
-    device = "cuda" if config.device == "auto" else config.device
-
-    if device != "cuda":
-        raise RuntimeError("Triton backend requires CUDA.")
-
-    mode_cfg_map = {
-        "fp16": {"codec": "fp16", "use_interpolation": False, "sink_blocks": 0},
-        "int4": {"codec": "int4", "use_interpolation": False, "sink_blocks": 0},
-        "int4-hamming": {
-            "codec": "hamming74",
-            "use_interpolation": False,
-            "sink_blocks": 0,
-        },
-        "int4-hamming84": {
-            "codec": "hamming84",
-            "use_interpolation": False,
-            "sink_blocks": 0,
-        },
-        "int4-hamming84-interp": {
-            "codec": "hamming84",
-            "use_interpolation": True,
-            "sink_blocks": 0,
-        },
-        "int12-golay": {"codec": "golay", "use_interpolation": False, "sink_blocks": 0},
-        "adaptive": {"codec": "adaptive", "use_interpolation": False, "sink_blocks": 4},
-        "adaptive-uep": {
-            "codec": "adaptive",
-            "use_interpolation": False,
-            "sink_blocks": 4,
-        },
-    }
-    if cache_mode not in mode_cfg_map:
-        raise ValueError(f"Unsupported cache_mode for Triton backend: {cache_mode}")
-
-    mode_cfg = mode_cfg_map[cache_mode]
-
-    ecc_config = ECCShimConfig(
-        codec=mode_cfg["codec"],
-        ber=ber,
-        inject_errors=(ber > 0),
-        seed=seed,
-        num_blocks=2048,
-        block_size=16,
-        sink_blocks=mode_cfg["sink_blocks"],
-        use_interpolation=mode_cfg["use_interpolation"],
-    )
-
-    model_device = next(model.parameters()).device
-    if str(model_device) != str(device):
-        model = model.to(device)
-
-    total_loss = 0.0
-    total_tokens = 0
-
-    kl_div = 0.0
-    top5_acc = 1.0
-    cat_rate = 0.0
-
-    with torch.no_grad():
-        with patch_model_with_ecc_attention(
-            model, ecc_config, num_blocks=ecc_config.num_blocks
-        ):
-            for text in texts:
-                if not text.strip():
-                    continue
-
-                reset_ecc_cache(model)
-
-                inputs = tokenizer(
-                    text,
-                    return_tensors="pt",
-                    truncation=True,
-                    max_length=config.max_length,
-                )
-                input_ids = inputs["input_ids"].to(device)
-                seq_len = input_ids.size(1)
-                if seq_len < 2:
-                    continue
-
-                pad_id = tokenizer.pad_token_id or tokenizer.eos_token_id
-
-                outputs = model(
-                    input_ids,
-                    labels=input_ids,
-                    use_cache=True,
-                    pad_token_id=pad_id,
-                )
-                loss = outputs.loss
-                if torch.isnan(loss) or torch.isinf(loss):
-                    continue
-
-                total_loss += loss.item() * seq_len
-                total_tokens += seq_len
-
-            ppl = (
-                float("inf")
-                if total_tokens == 0
-                else float(torch.exp(torch.tensor(total_loss / total_tokens)).item())
-            )
-
-            if config.compute_kl_divergence and config.clean_logits is not None:
-                kl_div = compute_mean_kl_divergence(
-                    model,
-                    tokenizer,
-                    texts,
-                    config.clean_logits,
-                    max_length=config.max_length,
-                    device=device,
-                )
-
-            if config.compute_top5:
-                top5_acc = compute_top5_accuracy(
-                    model,
-                    tokenizer,
-                    texts,
-                    max_length=config.max_length,
-                    device=device,
-                )
-
-            if config.compute_catastrophic:
-                per_sample_ppls = compute_per_sample_perplexity(
-                    model,
-                    tokenizer,
-                    texts,
-                    max_length=config.max_length,
-                    stride=config.stride,
-                    device=device,
-                )
-                cat_rate = compute_catastrophic_rate(
-                    per_sample_ppls,
-                    threshold=config.catastrophic_threshold,
-                )
-
-            stats = get_ecc_stats(model)
-            errors_corrected = stats.get("errors_corrected", 0)
-            errors_detected = stats.get("errors_detected", 0)
-            total_values = stats.get("total_values", 0)
-
-    return TrialResult(
-        cache_mode=cache_mode,
-        ber=ber,
-        seed=seed,
-        perplexity=ppl,
-        errors_corrected=errors_corrected,
-        errors_detected=errors_detected,
-        total_values=total_values,
-        kl_divergence=kl_div,
-        top5_accuracy=top5_acc,
-        catastrophic_rate=cat_rate,
-        encode_time_ms=0.0,
-        decode_time_ms=0.0,
-        throughput_mvalues_sec=0.0,
-        transfer_overhead_pct=0.0,
-        is_cpu_bound=False,
-    )

@@ -1,21 +1,60 @@
+"""Evaluation framework for ECC-protected KV caches.
+
+Uses vLLM C++ backend for optimized paged attention with integrated
+ECC encode/decode.
+
+Core modules:
+- metrics: Perplexity, statistics, generation quality, downstream tasks
+- sweep: BER sweep configuration and execution (vLLM backend)
+- models: Model loading utilities
+- constants: Cache modes, BER levels, configuration
+"""
 from .metrics import (
+    # Perplexity metrics
     compute_perplexity,
+    compute_perplexity_torchmetrics,
+    compute_per_sample_perplexity,
+    compute_catastrophic_rate,
     compute_kl_divergence,
     compute_mean_kl_divergence,
     compute_top5_accuracy,
-    compute_catastrophic_rate,
-    compute_per_sample_perplexity,
     generate_clean_logits,
     load_wikitext2_test,
+    load_c4_validation,
+    load_ptb_test,
+    load_dataset_by_name,
+    # Statistical analysis
+    ConfidenceInterval,
+    HypothesisTestResult,
+    compute_confidence_interval,
+    cohens_d,
+    interpret_effect_size,
+    paired_t_test,
+    independent_t_test,
+    holm_bonferroni_correction,
+    bootstrap_ci,
+    # Generation metrics
+    compute_bleu,
+    compute_sentence_bleu,
+    compute_rouge_l,
+    compute_generation_metrics,
+    # Downstream tasks
+    TaskResult,
+    MMLU_SUBJECTS,
+    MMLU_STEM_SUBJECTS,
+    load_mmlu_subset,
+    evaluate_mmlu,
+    load_hellaswag_subset,
+    evaluate_hellaswag,
+    run_downstream_evaluation,
 )
 from .constants import (
     CACHE_MODES,
     CACHE_MODE_ORDER,
     CACHE_MODE_LABELS,
     BER_LEVELS,
-    BER_LEVELS_EXTENDED,
     DEFAULT_CONFIG,
-    DEFAULT_MODEL,
+    MODELS,
     get_cache_modes,
     get_ber_levels,
     get_seeds,
@@ -30,92 +69,61 @@ from .sweep import (
     run_sweep_single_seed,
 )
 
-
-from .experiments.monte_carlo import (
-    MonteCarloConfig,
-    run_monte_carlo_experiment,
-    format_results_table,
-    format_latex_table,
-    save_results,
-)
-from .experiments.architecture import (
-    ArchitectureInfo,
-    ComparisonResult,
-    analyze_architecture,
-    run_architecture_comparison,
-    generate_comparison_report,
-    plot_comparison,
-)
-
-
-from .verification import (
-    NullSpaceResult,
-    OrthogonalityResult,
-    RankResult,
-    ErrorAmplificationResult,
-    VerificationReport,
-    verify_null_space_condition,
-    verify_subspace_orthogonality,
-    verify_basis_independence,
-    compute_error_amplification_hamming74,
-    compute_error_amplification_hamming84,
-    verify_hamming74,
-    verify_hamming84,
-    verify_golay2412,
-    run_all_verifications,
-    format_verification_report,
-)
-
 __all__ = [
+    # Perplexity metrics
+    "compute_perplexity",
+    "compute_perplexity_torchmetrics",
+    "compute_per_sample_perplexity",
+    "compute_catastrophic_rate",
+    "compute_kl_divergence",
+    "compute_mean_kl_divergence",
+    "compute_top5_accuracy",
+    "generate_clean_logits",
+    "load_wikitext2_test",
+    "load_c4_validation",
+    "load_ptb_test",
+    "load_dataset_by_name",
+    # Statistical analysis
+    "ConfidenceInterval",
+    "HypothesisTestResult",
+    "compute_confidence_interval",
+    "cohens_d",
+    "interpret_effect_size",
+    "paired_t_test",
+    "independent_t_test",
+    "holm_bonferroni_correction",
+    "bootstrap_ci",
+    # Generation metrics
+    "compute_bleu",
+    "compute_sentence_bleu",
+    "compute_rouge_l",
+    "compute_generation_metrics",
+    # Downstream tasks
+    "TaskResult",
+    "MMLU_SUBJECTS",
+    "MMLU_STEM_SUBJECTS",
+    "load_mmlu_subset",
+    "evaluate_mmlu",
+    "load_hellaswag_subset",
+    "evaluate_hellaswag",
+    "run_downstream_evaluation",
+    # Constants
     "CACHE_MODES",
     "CACHE_MODE_ORDER",
     "CACHE_MODE_LABELS",
     "BER_LEVELS",
-    "BER_LEVELS_EXTENDED",
     "DEFAULT_CONFIG",
-    "DEFAULT_MODEL",
+    "MODELS",
     "get_cache_modes",
     "get_ber_levels",
     "get_seeds",
-    "compute_perplexity",
-    "compute_kl_divergence",
-    "compute_mean_kl_divergence",
-    "compute_top5_accuracy",
-    "compute_catastrophic_rate",
-    "compute_per_sample_perplexity",
-    "generate_clean_logits",
-    "load_wikitext2_test",
+    # Models
     "load_model",
+    # Sweep (vLLM backend)
     "SweepConfig",
     "TrialResult",
     "AggregatedResult",
     "SweepResults",
     "run_sweep",
     "run_sweep_single_seed",
-    "MonteCarloConfig",
-    "run_monte_carlo_experiment",
-    "format_results_table",
-    "format_latex_table",
-    "save_results",
-    "ArchitectureInfo",
-    "ComparisonResult",
-    "analyze_architecture",
-    "run_architecture_comparison",
-    "generate_comparison_report",
-    "plot_comparison",
-    "NullSpaceResult",
-    "OrthogonalityResult",
-    "RankResult",
-    "ErrorAmplificationResult",
-    "VerificationReport",
-    "verify_null_space_condition",
-    "verify_subspace_orthogonality",
-    "verify_basis_independence",
-    "compute_error_amplification_hamming74",
-    "compute_error_amplification_hamming84",
-    "verify_hamming74",
-    "verify_hamming84",
-    "verify_golay2412",
-    "run_all_verifications",
-    "format_verification_report",
 ]

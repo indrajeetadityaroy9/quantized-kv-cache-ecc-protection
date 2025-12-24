@@ -113,38 +113,16 @@ void paged_attention_v1_launcher(
   const at::cuda::OptionalCUDAGuard device_guard(device_of(query));
   const cudaStream_t stream = at::cuda::getCurrentCUDAStream();
   switch (head_size) {
-    // NOTE(woosuk): To reduce the compilation time, we only compile for the
-    // head sizes that we use in the model. However, we can easily extend this
-    // to support any head size which is a multiple of 16.
-    case 32:
-      LAUNCH_PAGED_ATTENTION_V1(32);
-      break;
+    // NOTE: Reduced to GPT-2 (64) and LLaMA-3.1-8B (128) for faster builds
     case 64:
       LAUNCH_PAGED_ATTENTION_V1(64);
-      break;
-    case 80:
-      LAUNCH_PAGED_ATTENTION_V1(80);
-      break;
-    case 96:
-      LAUNCH_PAGED_ATTENTION_V1(96);
-      break;
-    case 112:
-      LAUNCH_PAGED_ATTENTION_V1(112);
-      break;
-    case 120:
-      LAUNCH_PAGED_ATTENTION_V1(120);
       break;
     case 128:
       LAUNCH_PAGED_ATTENTION_V1(128);
       break;
-    case 192:
-      LAUNCH_PAGED_ATTENTION_V1(192);
-      break;
-    case 256:
-      LAUNCH_PAGED_ATTENTION_V1(256);
-      break;
     default:
-      TORCH_CHECK(false, "Unsupported head size: ", head_size);
+      TORCH_CHECK(false, "Unsupported head size: ", head_size,
+                  ". Only 64 (GPT-2) and 128 (LLaMA) compiled.");
       break;
   }
 }
@@ -169,9 +147,6 @@ void paged_attention_v1_launcher(
 // 1, 2, 4, 64, 128, 256.
 #define CALL_V1_LAUNCHER_BLOCK_SIZE(T, CACHE_T, KV_DTYPE)         \
   switch (block_size) {                                           \
-    case 8:                                                       \
-      CALL_V1_LAUNCHER_SPARSITY(T, CACHE_T, 8, KV_DTYPE);         \
-      break;                                                      \
     case 16:                                                      \
       CALL_V1_LAUNCHER_SPARSITY(T, CACHE_T, 16, KV_DTYPE);        \
       break;                                                      \
@@ -179,7 +154,8 @@ void paged_attention_v1_launcher(
       CALL_V1_LAUNCHER_SPARSITY(T, CACHE_T, 32, KV_DTYPE);        \
       break;                                                      \
     default:                                                      \
-      TORCH_CHECK(false, "Unsupported block size: ", block_size); \
+      TORCH_CHECK(false, "Unsupported block size: ", block_size,  \
+                  ". Only 16 and 32 compiled.");                  \
       break;                                                      \
   }
 

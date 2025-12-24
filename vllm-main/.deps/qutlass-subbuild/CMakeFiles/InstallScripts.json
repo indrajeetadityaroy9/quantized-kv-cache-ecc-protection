@@ -1,0 +1,7 @@
+{
+	"InstallScripts" : 
+	[
+		"/home/ubuntu/quantized-kv-cache-ecc-protection/vllm-main/.deps/qutlass-subbuild/cmake_install.cmake"
+	],
+	"Parallel" : false
+}

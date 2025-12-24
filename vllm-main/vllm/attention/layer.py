@@ -269,9 +269,16 @@ class Attention(nn.Module, AttentionLayerBase):
         ]
 
         # Initialize q/k/v range constants.
-        self.q_range = torch.tensor(envs.Q_SCALE_CONSTANT, dtype=torch.float32)
-        self.k_range = torch.tensor(envs.K_SCALE_CONSTANT, dtype=torch.float32)
-        self.v_range = torch.tensor(envs.V_SCALE_CONSTANT, dtype=torch.float32)
+        # For INT4 modes, use range of 7.0 (INT4 signed is [-8,7], divide by 7.0)
+        # For FP8 modes, use environment variable defaults (200/100)
+        if kv_cache_dtype.startswith("int4"):
+            self.q_range = torch.tensor(7.0, dtype=torch.float32)
+            self.k_range = torch.tensor(7.0, dtype=torch.float32)
+            self.v_range = torch.tensor(7.0, dtype=torch.float32)
+        else:
+            self.q_range = torch.tensor(envs.Q_SCALE_CONSTANT, dtype=torch.float32)
+            self.k_range = torch.tensor(envs.K_SCALE_CONSTANT, dtype=torch.float32)
+            self.v_range = torch.tensor(envs.V_SCALE_CONSTANT, dtype=torch.float32)
 
         # for attn backends supporting query quantization
         self.query_quant = None
@@ -526,9 +533,16 @@ class MLAAttention(nn.Module, AttentionLayerBase):
         self.use_sparse = use_sparse
 
         # Initialize q/k/v range constants.
-        self.q_range = torch.tensor(envs.Q_SCALE_CONSTANT, dtype=torch.float32)
-        self.k_range = torch.tensor(envs.K_SCALE_CONSTANT, dtype=torch.float32)
-        self.v_range = torch.tensor(envs.V_SCALE_CONSTANT, dtype=torch.float32)
+        # For INT4 modes, use range of 7.0 (INT4 signed is [-8,7], divide by 7.0)
+        # For FP8 modes, use environment variable defaults (200/100)
+        if kv_cache_dtype.startswith("int4"):
+            self.q_range = torch.tensor(7.0, dtype=torch.float32)
+            self.k_range = torch.tensor(7.0, dtype=torch.float32)
+            self.v_range = torch.tensor(7.0, dtype=torch.float32)
+        else:
+            self.q_range = torch.tensor(envs.Q_SCALE_CONSTANT, dtype=torch.float32)
+            self.k_range = torch.tensor(envs.K_SCALE_CONSTANT, dtype=torch.float32)
+            self.v_range = torch.tensor(envs.V_SCALE_CONSTANT, dtype=torch.float32)
 
     def forward(
         self,

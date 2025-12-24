@@ -44,6 +44,7 @@ def paged_attention_v1(
     golay_syndrome_lut: torch.Tensor | None = None,
     golay_stats: torch.Tensor | None = None,
     hamming_stats: torch.Tensor | None = None,
+    rs_stats: torch.Tensor | None = None,
     tp_rank: int = 0,
     blocksparse_local_blocks: int = 0,
     blocksparse_vert_stride: int = 0,
@@ -68,6 +69,7 @@ def paged_attention_v1(
         golay_syndrome_lut,
         golay_stats,
         hamming_stats,
+        rs_stats,
         tp_rank,
         blocksparse_local_blocks,
         blocksparse_vert_stride,
@@ -97,6 +99,7 @@ def paged_attention_v2(
     golay_syndrome_lut: torch.Tensor | None = None,
     golay_stats: torch.Tensor | None = None,
     hamming_stats: torch.Tensor | None = None,
+    rs_stats: torch.Tensor | None = None,
     tp_rank: int = 0,
     blocksparse_local_blocks: int = 0,
     blocksparse_vert_stride: int = 0,
@@ -124,6 +127,7 @@ def paged_attention_v2(
         golay_syndrome_lut,
         golay_stats,
         hamming_stats,
+        rs_stats,
         tp_rank,
         blocksparse_local_blocks,
         blocksparse_vert_stride,
@@ -2489,6 +2493,7 @@ def cp_gather_and_ecc_decode_kv_cache(
     golay_syndrome_lut: torch.Tensor | None = None,
     golay_stats: torch.Tensor | None = None,
     hamming_stats: torch.Tensor | None = None,
+    rs_stats: torch.Tensor | None = None,
 ) -> None:
     """Gather and ECC-decode INT4 KV cache to FP16/BF16 workspace.
 
@@ -2506,17 +2511,18 @@ def cp_gather_and_ecc_decode_kv_cache(
         seq_starts: Starting offsets per batch [BATCH]
         k_scale: Key quantization scale
         v_scale: Value quantization scale
-        kv_cache_dtype: ECC type ("int4_ecc", "int4_h74", "int4_golay", "int4_golay_hybrid")
+        kv_cache_dtype: ECC type ("int4_ecc", "int4_h74", "int4_golay", "int4_golay_hybrid", "int4_rs")
         golay_syndrome_lut: Golay syndrome lookup table (required for golay modes)
         golay_stats: Golay error statistics tensor (optional)
         hamming_stats: Hamming error statistics tensor (optional)
+        rs_stats: Reed-Solomon error statistics tensor (optional)
     """
     torch.ops._C_cache_ops.cp_gather_and_ecc_decode_kv_cache(
         src_cache_k, src_cache_v,
         dst_k, dst_v,
         block_table, cu_seq_lens, seq_starts,
         k_scale, v_scale, kv_cache_dtype,
-        golay_syndrome_lut, golay_stats, hamming_stats,
+        golay_syndrome_lut, golay_stats, hamming_stats, rs_stats,
     )
 
 

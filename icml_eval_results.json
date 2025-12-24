@@ -1,0 +1,528 @@
+{
+  "config": {
+    "model": "gpt2",
+    "dataset": "wikitext2",
+    "max_samples": 50,
+    "max_length": 256,
+    "stride": 128,
+    "seeds": [
+      42
+    ],
+    "ber_levels": [
+      0,
+      1e-05,
+      0.0001,
+      0.001,
+      0.01
+    ],
+    "cache_modes": [
+      "fp16",
+      "int4",
+      "int4-hamming",
+      "int4-hamming84",
+      "int4-golay-hybrid",
+      "int4-reed-solomon"
+    ],
+    "gpu_memory_utilization": 0.5,
+    "output_file": "icml_eval_results.json",
+    "throughput_iterations": 100,
+    "catastrophic_threshold": 1000.0
+  },
+  "timestamp": "2025-12-24T10:45:51.290366",
+  "gpu_info": {
+    "available": true,
+    "device_count": 1,
+    "current_device": 0,
+    "device_name": "NVIDIA H100 80GB HBM3",
+    "total_memory_gb": 79.1888427734375
+  },
+  "n_texts": 50,
+  "perplexity_results": [
+    {
+      "cache_mode": "fp16",
+      "ber": 0,
+      "seed": 42,
+      "perplexity_mean": 75.72400655656983,
+      "perplexity_std": 65.14499131806822,
+      "perplexity_median": 55.24987557696015,
+      "perplexity_ci_lower": 57.21000487267821,
+      "perplexity_ci_upper": 94.23800824046145,
+      "catastrophic_rate": 0.0,
+      "n_samples": 50,
+      "n_valid": 50,
+      "elapsed_seconds": 8.948461532592773,
+      "per_sample_ppls": [
+        54.963671512153475,
+        43.64397444542265,
+        45.30057355180844,
+        56.42099193018421,
+        54.07952375294507,
+        47.16156434532486,
+        55.536079641766825,
+        38.28111751283951,
+        66.75326727645428,
+        49.289395356465555,
+        23.633760075835855,
+        85.27779650889508,
+        51.48462855735585,
+        39.40191172094915,
+        64.6697747251441,
+        27.98667591178,
+        45.375980034850144,
+        50.76730136095812,
+        180.16856779927434,
+        37.199495849829624,
+        38.63028829055266,
+        132.8944998751709,
+        81.56966792630826,
+        40.77076695991906,
+        52.34691025944347,
+        47.5936908996912,
+        36.54284586580301,
+        105.60237488343866,
+        117.89127009678987,
+        54.516453382646446,
+        82.59492792575466,
+        93.20569328304603,
+        139.49816982045024,
+        64.21947569706549,
+        71.77920236692606,
+        102.43534298374436,
+        152.20130112337534,
+        130.30909604258116,
+        42.00705069469808,
+        68.69146364214826,
+        46.119516396054024,
+        47.99761888701148,
+        58.53524753150202,
+        67.04396572021813,
+        49.96747701411393,
+        53.191692520963464,
+        61.84376177828271,
+        64.57734397379265,
+        102.69518215703866,
+        461.5319779597238
+      ]
+    },
+    {
+      "cache_mode": "int4-hamming",
+      "ber": 0,
+      "seed": 42,
+      "perplexity_mean": 96.37950033726547,
+      "perplexity_std": 68.81990913974322,
+      "perplexity_median": 75.85336231283317,
+      "perplexity_ci_lower": 76.8210985642486,
+      "perplexity_ci_upper": 115.93790211028234,
+      "catastrophic_rate": 0.0,
+      "n_samples": 50,
+      "n_valid": 50,
+      "elapsed_seconds": 1.4035546779632568,
+      "per_sample_ppls": [
+        67.23418780379565,
+        49.17043702847022,
+        61.4113882075854,
+        69.29680881581474,
+        75.72862991084928,
+        69.33942169311072,
+        78.0644836384578,
+        55.869868849099014,
+        87.0135621744853,
+        68.29359529830387,
+        31.822706123908986,
+        119.0747155438689,
+        75.97809471481706,
+        56.47273920776637,
+        76.42728961007417,
+        39.893333002635785,
+        60.15651581389805,
+        72.55961510361257,
+        213.7835865352042,
+        54.422935807946104,
+        55.099686650563726,
+        163.44698506601836,
+        124.19688834953305,
+        55.098686526732834,
+        72.43643551453593,
+        60.04229226668812,
+        51.92789347822578,
+        152.73674883364006,
+        160.83679852552274,
+        72.80857711733147,
+        106.45343885513489,
+        121.57375337117527,
+        162.5111414426848,
+        78.67952320775025,
+        107.24682037576096,
+        151.38336127807926,
+        159.12984809724236,
+        137.4446922951579,
+        51.418035712152594,
+        81.7454296095745,
+        65.60494168979879,
+        62.944478304943,
+        86.59776240522727,
+        84.071930381011,
+        60.467774674106174,
+        67.9087262345514,
+        79.29385682832486,
+        85.63221700273772,
+        131.44218643399194,
+        486.7801914513733
+      ]
+    }
+  ],
+  "aggregated_perplexity": {
+    "fp16": {
+      "n_seeds": 1,
+      "perplexity_mean": 75.72400655656983,
+      "perplexity_std": 0.0,
+      "perplexity_ci_lower": 75.72400655656983,
+      "perplexity_ci_upper": 75.72400655656983,
+      "catastrophic_rate_mean": 0.0,
+      "catastrophic_rate_std": 0.0
+    },
+    "int4-hamming": {
+      "n_seeds": 1,
+      "perplexity_mean": 96.37950033726547,
+      "perplexity_std": 0.0,
+      "perplexity_ci_lower": 96.37950033726547,
+      "perplexity_ci_upper": 96.37950033726547,
+      "catastrophic_rate_mean": 0.0,
+      "catastrophic_rate_std": 0.0
+    }
+  },
+  "memory_metrics": {
+    "fp16": {
+      "bits_per_value": 16,
+      "data_bits": 16,
+      "ecc_bits": 0,
+      "compression_ratio": 1.0,
+      "memory_overhead_pct": 0.0,
+      "bytes_per_value": 2.0
+    },
+    "int4": {
+      "bits_per_value": 4,
+      "data_bits": 4,
+      "ecc_bits": 0,
+      "compression_ratio": 4.0,
+      "memory_overhead_pct": 0.0,
+      "bytes_per_value": 0.5
+    },
+    "int4-hamming": {
+      "bits_per_value": 7,
+      "data_bits": 4,
+      "ecc_bits": 3,
+      "compression_ratio": 2.2857142857142856,
+      "memory_overhead_pct": 75.0,
+      "bytes_per_value": 0.875
+    },
+    "int4-hamming84": {
+      "bits_per_value": 8,
+      "data_bits": 4,
+      "ecc_bits": 4,
+      "compression_ratio": 2.0,
+      "memory_overhead_pct": 100.0,
+      "bytes_per_value": 1.0
+    },
+    "int4-golay-hybrid": {
+      "bits_per_value": 8,
+      "data_bits": 4,
+      "ecc_bits": 4,
+      "compression_ratio": 2.0,
+      "memory_overhead_pct": 100.0,
+      "bytes_per_value": 1.0
+    },
+    "int4-reed-solomon": {
+      "bits_per_value": 6,
+      "data_bits": 4,
+      "ecc_bits": 2,
+      "compression_ratio": 2.6666666666666665,
+      "memory_overhead_pct": 50.0,
+      "bytes_per_value": 0.75
+    }
+  },
+  "fault_injection_results": {
+    "fp16": {
+      "baseline": {
+        "ber": 0,
+        "k_rmse": 0.0,
+        "v_rmse": 0.0,
+        "bits_flipped": 0,
+        "description": "FP16 has no quantization error but no error protection"
+      },
+      "ber_1e-05": {
+        "ber": 1e-05,
+        "bits_flipped": 180,
+        "total_bits": 19660800,
+        "measured_ber": 9.1552734375e-06,
+        "k_rmse": 0.00948166474699974,
+        "v_rmse": 126.58142852783203,
+        "nan_inf_count": 2,
+        "nan_inf_rate": 1.6276041666666668e-06,
+        "rmse_degradation_pct": Infinity,
+        "correction_rate": 0.0,
+        "description": "FP16 vulnerable: 2 values became NaN/Inf"
+      },
+      "ber_1e-04": {
+        "ber": 0.0001,
+        "bits_flipped": 1909,
+        "total_bits": 19660800,
+        "measured_ber": 9.709676106770833e-05,
+        "k_rmse": 289.04998779296875,
+        "v_rmse": 325.2279357910156,
+        "nan_inf_count": 36,
+        "nan_inf_rate": 2.9296875e-05,
+        "rmse_degradation_pct": Infinity,
+        "correction_rate": 0.0,
+        "description": "FP16 vulnerable: 36 values became NaN/Inf"
+      },
+      "ber_1e-03": {
+        "ber": 0.001,
+        "bits_flipped": 19589,
+        "total_bits": 19660800,
+        "measured_ber": 0.0009963480631510417,
+        "k_rmse": 955.4944458007812,
+        "v_rmse": 968.069580078125,
+        "nan_inf_count": 340,
+        "nan_inf_rate": 0.0002766927083333333,
+        "rmse_degradation_pct": Infinity,
+        "correction_rate": 0.0,
+        "description": "FP16 vulnerable: 340 values became NaN/Inf"
+      },
+      "ber_1e-02": {
+        "ber": 0.01,
+        "bits_flipped": 196459,
+        "total_bits": 19660800,
+        "measured_ber": 0.009992421468098958,
+        "k_rmse": 2868.298828125,
+        "v_rmse": 2911.48974609375,
+        "nan_inf_count": 3267,
+        "nan_inf_rate": 0.00265869140625,
+        "rmse_degradation_pct": Infinity,
+        "correction_rate": 0.0,
+        "description": "FP16 vulnerable: 3267 values became NaN/Inf"
+      }
+    },
+    "int4": {
+      "error": "Unsupported data type of kv cache: int4_unprotected"
+    },
+    "int4-hamming": {
+      "baseline": {
+        "ber": 0,
+        "k_rmse": 0.1881103515625,
+        "v_rmse": 0.2108154296875,
+        "bits_flipped": 0,
+        "hamming_no_error": 0,
+        "hamming_corrected": 0,
+        "hamming_detected_uncorrectable": 0
+      },
+      "ber_1e-05": {
+        "ber": 1e-05,
+        "bits_flipped": 180,
+        "total_bits": 19660800,
+        "measured_ber": 9.1552734375e-06,
+        "k_rmse": 0.1881103515625,
+        "v_rmse": 0.2108154296875,
+        "rmse_degradation_pct": 0.0,
+        "hamming_no_error": 1228728,
+        "hamming_corrected": 72,
+        "hamming_detected_uncorrectable": 0,
+        "hamming_parity_only": 0,
+        "correction_rate": 1.0
+      },
+      "ber_1e-04": {
+        "ber": 0.0001,
+        "bits_flipped": 1909,
+        "total_bits": 19660800,
+        "measured_ber": 9.709676106770833e-05,
+        "k_rmse": 0.1881103515625,
+        "v_rmse": 0.2108154296875,
+        "rmse_degradation_pct": 0.0,
+        "hamming_no_error": 1227956,
+        "hamming_corrected": 844,
+        "hamming_detected_uncorrectable": 0,
+        "hamming_parity_only": 0,
+        "correction_rate": 1.0
+      },
+      "ber_1e-03": {
+        "ber": 0.001,
+        "bits_flipped": 19589,
+        "total_bits": 19660800,
+        "measured_ber": 0.0009963480631510417,
+        "k_rmse": 0.1885986328125,
+        "v_rmse": 0.2122802734375,
+        "rmse_degradation_pct": 0.4895960832313362,
+        "hamming_no_error": 1220230,
+        "hamming_corrected": 8570,
+        "hamming_detected_uncorrectable": 0,
+        "hamming_parity_only": 0,
+        "correction_rate": 1.0
+      },
+      "ber_1e-02": {
+        "ber": 0.01,
+        "bits_flipped": 196459,
+        "total_bits": 19660800,
+        "measured_ber": 0.009992421468098958,
+        "k_rmse": 0.240234375,
+        "v_rmse": 0.268798828125,
+        "rmse_degradation_pct": 27.600979192166463,
+        "hamming_no_error": 1145584,
+        "hamming_corrected": 83216,
+        "hamming_detected_uncorrectable": 0,
+        "hamming_parity_only": 0,
+        "correction_rate": 1.0
+      }
+    },
+    "int4-hamming84": {
+      "baseline": {
+        "ber": 0,
+        "k_rmse": 0.1986083984375,
+        "v_rmse": 0.200927734375,
+        "bits_flipped": 0,
+        "hamming_no_error": 0,
+        "hamming_corrected": 0,
+        "hamming_detected_uncorrectable": 0
+      },
+      "ber_1e-05": {
+        "ber": 1e-05,
+        "bits_flipped": 180,
+        "total_bits": 19660800,
+        "measured_ber": 9.1552734375e-06,
+        "k_rmse": 0.1986083984375,
+        "v_rmse": 0.200927734375,
+        "rmse_degradation_pct": 0.0,
+        "hamming_no_error": 1228714,
+        "hamming_corrected": 72,
+        "hamming_detected_uncorrectable": 0,
+        "hamming_parity_only": 0,
+        "correction_rate": 1.0
+      },
+      "ber_1e-04": {
+        "ber": 0.0001,
+        "bits_flipped": 1909,
+        "total_bits": 19660800,
+        "measured_ber": 9.709676106770833e-05,
+        "k_rmse": 0.1986083984375,
+        "v_rmse": 0.200927734375,
+        "rmse_degradation_pct": 0.0,
+        "hamming_no_error": 1227846,
+        "hamming_corrected": 844,
+        "hamming_detected_uncorrectable": 0,
+        "hamming_parity_only": 0,
+        "correction_rate": 1.0
+      },
+      "ber_1e-03": {
+        "ber": 0.001,
+        "bits_flipped": 19589,
+        "total_bits": 19660800,
+        "measured_ber": 0.0009963480631510417,
+        "k_rmse": 0.200927734375,
+        "v_rmse": 0.2044677734375,
+        "rmse_degradation_pct": 1.466544454628771,
+        "hamming_no_error": 1219008,
+        "hamming_corrected": 8528,
+        "hamming_detected_uncorrectable": 42,
+        "hamming_parity_only": 0,
+        "correction_rate": 0.9950991831971996
+      },
+      "ber_1e-02": {
+        "ber": 0.01,
+        "bits_flipped": 196459,
+        "total_bits": 19660800,
+        "measured_ber": 0.009992421468098958,
+        "k_rmse": 0.350830078125,
+        "v_rmse": 0.360595703125,
+        "rmse_degradation_pct": 78.06293919951115,
+        "hamming_no_error": 1134215,
+        "hamming_corrected": 79879,
+        "hamming_detected_uncorrectable": 3337,
+        "hamming_parity_only": 0,
+        "correction_rate": 0.9598995385502788
+      }
+    },
+    "int4-golay-hybrid": {
+      "error": "golay_syndrome_lut required for int4_golay_hybrid"
+    },
+    "int4-reed-solomon": {
+      "error": "Unsupported kv_cache_dtype: int4_rs"
+    }
+  },
+  "throughput_results": {
+    "fp16": {
+      "skipped": "FP16 mode - no custom kernels"
+    },
+    "int4": {
+      "error": "Unsupported data type of kv cache: int4_unprotected"
+    },
+    "int4-hamming": {
+      "encode_throughput_mvalues_sec": 171250.32291328136,
+      "decode_throughput_mvalues_sec": 13093.896056854559,
+      "encode_latency_us": 18.36917996115517,
+      "decode_latency_us": 240.24384998483583,
+      "num_values": 3145728
+    },
+    "int4-hamming84": {
+      "encode_throughput_mvalues_sec": 148967.88444371757,
+      "decode_throughput_mvalues_sec": 12234.341899321877,
+      "encode_latency_us": 21.116819989401847,
+      "decode_latency_us": 257.12277994898614,
+      "num_values": 3145728
+    },
+    "int4-golay-hybrid": {
+      "error": "golay_syndrome_lut required for int4_golay_hybrid"
+    },
+    "int4-reed-solomon": {
+      "error": "Unsupported kv_cache_dtype: int4_rs"
+    }
+  },
+  "ecc_capabilities": {
+    "fp16": {
+      "bits_per_value": 16,
+      "data_bits": 16,
+      "ecc_bits": 0,
+      "correction_capability": 0,
+      "detection_capability": 0,
+      "description": "FP16 Oracle baseline (no quantization)"
+    },
+    "int4": {
+      "bits_per_value": 4,
+      "data_bits": 4,
+      "ecc_bits": 0,
+      "correction_capability": 0,
+      "detection_capability": 0,
+      "description": "INT4 quantized (no error protection)"
+    },
+    "int4-hamming": {
+      "bits_per_value": 7,
+      "data_bits": 4,
+      "ecc_bits": 3,
+      "correction_capability": 1,
+      "detection_capability": 1,
+      "description": "INT4 + Hamming(7,4) SEC"
+    },
+    "int4-hamming84": {
+      "bits_per_value": 8,
+      "data_bits": 4,
+      "ecc_bits": 4,
+      "correction_capability": 1,
+      "detection_capability": 2,
+      "description": "INT4 + Hamming(8,4) SECDED"
+    },
+    "int4-golay-hybrid": {
+      "bits_per_value": 8,
+      "data_bits": 4,
+      "ecc_bits": 4,
+      "correction_capability": 3,
+      "detection_capability": 3,
+      "description": "Golay(24,12) for triplets + Hamming(8,4) for remainder"
+    },
+    "int4-reed-solomon": {
+      "bits_per_value": 6,
+      "data_bits": 4,
+      "ecc_bits": 2,
+      "correction_capability": 8,
+      "detection_capability": 8,
+      "description": "Reed-Solomon(12,8) over GF(2^4)"
+    }
+  }
+}

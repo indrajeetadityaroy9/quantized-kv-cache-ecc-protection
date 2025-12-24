@@ -135,7 +135,19 @@ class FlashAttentionBackend(AttentionBackend):
             # Shape: (2, num_blocks, num_kv_heads, rs_head_bytes, block_size)
             return (2, num_blocks, num_kv_heads, rs_head_bytes, block_size)
 
-        # Standard layout for other modes (FP16, FP8, Hamming ECC)
+        # Hamming ECC modes use NHD layout (same as standard)
+        # int4_ecc: Hamming(8,4) - each INT4 (4 bits) becomes 8 bits (1 byte)
+        # int4_h74: Hamming(7,4) - each INT4 (4 bits) becomes 7 bits, packed
+        if cache_dtype_str in ("int4_ecc", "int4_h74"):
+            # For Hamming(8,4): head_size bytes per head (1 byte per INT4 value)
+            # For Hamming(7,4): 7 bits per 4-bit value, but stored as bytes
+            # Both modes store 1 byte per INT4 value for simplicity
+            hamming_head_bytes = head_size
+            # Shape: (2, num_blocks, block_size, num_kv_heads, hamming_head_bytes)
+            # This matches NHD layout expected by reshape_and_cache_flash kernel
+            return (2, num_blocks, block_size, num_kv_heads, hamming_head_bytes)
+
+        # Standard layout for other modes (FP16, FP8)
         return (2, num_blocks, block_size, num_kv_heads, head_size)
 
     @staticmethod
@@ -162,6 +174,15 @@ class FlashAttentionBackend(AttentionBackend):
             if include_num_layers_dimension:
                 # (num_blocks, num_layers, 2, num_heads, rs_bytes, block_size)
                 return (1, 0, 2, 3, 4, 5)
+            return (0, 1, 2, 3, 4)
+
+        # Hamming modes use NHD layout (same as standard)
+        # Shape from get_kv_cache_shape: (2, num_blocks, block_size, num_heads, hamming_bytes)
+        # This matches the standard NHD layout, so use standard stride order
+        if cache_dtype_str in ("int4_ecc", "int4_h74"):
+            if include_num_layers_dimension:
+                # (num_blocks, num_layers, 2, block_size, num_kv_heads, head_size)
+                return (2, 0, 1, 3, 4, 5)
             return (0, 1, 2, 3, 4)
 
         cache_layout = get_kv_cache_layout()
@@ -326,7 +347,10 @@ class FlashAttentionMetadataBuilder(AttentionMetadataBuilder[FlashAttentionMetad
         self.block_size = kv_cache_spec.block_size
 
         self.max_num_splits = 0  # No upper bound on the number of splits.
-        self.aot_schedule = get_flash_attn_version() == 3
+        # Disable FA3's AOT scheduler for ECC modes since FA3 doesn't support INT4
+        cache_dtype = self.cache_config.cache_dtype
+        is_ecc_mode = cache_dtype.startswith("int4")
+        self.aot_schedule = get_flash_attn_version() == 3 and not is_ecc_mode
 
         try:
             from vllm.distributed.parallel_state import get_dcp_group

@@ -565,28 +565,7 @@ __inline__ __device__ Tout scaled_convert(const Tin& x, const float scale) {
           TORCH_CHECK(false,                                                   \
                       "Unsupported input type of kv cache: ", SRC_DTYPE);      \
         }                                                                      \
-      } else if (KV_DTYPE == "fp8_e5m2") {                                     \
-        if (SRC_DTYPE == at::ScalarType::Float) {                              \
-          FN(float, uint8_t, vllm::Fp8KVCacheDataType::kFp8E5M2);              \
-        } else if (SRC_DTYPE == at::ScalarType::Half) {                        \
-          FN(uint16_t, uint8_t, vllm::Fp8KVCacheDataType::kFp8E5M2);           \
-        } else if (SRC_DTYPE == at::ScalarType::BFloat16) {                    \
-          FN(__nv_bfloat16, uint8_t, vllm::Fp8KVCacheDataType::kFp8E5M2);      \
-        } else {                                                               \
-          TORCH_CHECK(false,                                                   \
-                      "Unsupported input type of kv cache: ", SRC_DTYPE);      \
-        }                                                                      \
-      } else if (KV_DTYPE == "fp8_ds_mla") {                                   \
-        if (SRC_DTYPE == at::ScalarType::Float) {                              \
-          FN(float, uint8_t, vllm::Fp8KVCacheDataType::kFp8E4M3);              \
-        } else if (SRC_DTYPE == at::ScalarType::Half) {                        \
-          FN(uint16_t, uint8_t, vllm::Fp8KVCacheDataType::kFp8E4M3);           \
-        } else if (SRC_DTYPE == at::ScalarType::BFloat16) {                    \
-          FN(__nv_bfloat16, uint8_t, vllm::Fp8KVCacheDataType::kFp8E4M3);      \
-        } else {                                                               \
-          TORCH_CHECK(false,                                                   \
-                      "Unsupported input type of kv cache: ", SRC_DTYPE);      \
-        }                                                                      \
+      /* NOTE: fp8_e5m2 and fp8_ds_mla removed to reduce compile time */       \
       } else if (KV_DTYPE == "int4_ecc") {                                     \
         if (SRC_DTYPE == at::ScalarType::Float) {                              \
           FN(float, uint8_t, vllm::Fp8KVCacheDataType::kInt4Ecc);              \

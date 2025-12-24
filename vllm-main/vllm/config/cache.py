@@ -4,7 +4,7 @@
 from dataclasses import field
 from typing import TYPE_CHECKING, Any, Literal
 
-from pydantic import Field, SkipValidation, field_validator
+from pydantic import Field, SkipValidation, field_validator, model_validator
 from pydantic.dataclasses import dataclass
 
 from vllm.config.utils import config
@@ -228,6 +228,19 @@ class CacheConfig:
                 "error correction for fault tolerance.", codec_desc
             )
         return cache_dtype
+
+    @model_validator(mode="after")
+    def _enable_scales_for_int4(self):
+        """Auto-enable dynamic scale calculation for INT4 cache modes.
+
+        INT4 quantization requires per-block scale factors (absmax/7.0) to be
+        computed dynamically from key/value tensors, unlike FP8 which can use
+        static scales from checkpoints.
+        """
+        if self.cache_dtype.startswith("int4"):
+            # Force calculate_kv_scales=True for INT4 modes
+            object.__setattr__(self, "calculate_kv_scales", True)
+        return self
 
     def verify_with_parallel_config(
         self,

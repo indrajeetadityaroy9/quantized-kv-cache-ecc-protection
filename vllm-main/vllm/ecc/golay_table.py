@@ -50,7 +50,8 @@ def _compute_syndrome(codeword: int) -> int:
             syndrome |= (1 << i)
         if codeword & (1 << i):
             syndrome ^= GOLAY_GENERATOR_ROWS[i]
-    return syndrome
+    # Ensure syndrome is 12 bits (mask to valid range for lookup table)
+    return syndrome & 0xFFF
 
 
 def _popcount(x: int) -> int:

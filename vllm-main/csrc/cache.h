@@ -92,7 +92,8 @@ void cp_gather_and_ecc_decode_kv_cache(
     const std::string& kv_cache_dtype,
     std::optional<torch::Tensor> golay_syndrome_lut = std::nullopt,
     std::optional<torch::Tensor> golay_stats = std::nullopt,
-    std::optional<torch::Tensor> hamming_stats = std::nullopt);
+    std::optional<torch::Tensor> hamming_stats = std::nullopt,
+    std::optional<torch::Tensor> rs_stats = std::nullopt);
 
 // Indexer K quantization and cache function
 void indexer_k_quant_and_cache(

@@ -2198,7 +2198,8 @@ void cp_gather_and_ecc_decode_kv_cache(
     const std::string& kv_cache_dtype,
     std::optional<torch::Tensor> golay_syndrome_lut,
     std::optional<torch::Tensor> golay_stats,
-    std::optional<torch::Tensor> hamming_stats) {
+    std::optional<torch::Tensor> hamming_stats,
+    std::optional<torch::Tensor> rs_stats) {
   at::cuda::OptionalCUDAGuard device_guard(src_cache_k.device());
   const cudaStream_t stream = at::cuda::getCurrentCUDAStream();
 

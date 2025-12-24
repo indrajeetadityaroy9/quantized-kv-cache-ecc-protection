@@ -45,7 +45,7 @@ TORCH_LIBRARY_EXPAND(TORCH_EXTENSION_NAME, ops) {
       "    int max_seq_len, Tensor? alibi_slopes,"
       "    str kv_cache_dtype, Tensor k_scale, Tensor v_scale,"
       "    Tensor? golay_syndrome_lut, Tensor? golay_stats, Tensor? hamming_stats,"
-      "    int tp_rank, int blocksparse_local_blocks,"
+      "    Tensor? rs_stats, int tp_rank, int blocksparse_local_blocks,"
       "    int blocksparse_vert_stride, int blocksparse_block_size,"
       "    int blocksparse_head_sliding_step) -> ()");
   ops.impl("paged_attention_v1", torch::kCUDA, &paged_attention_v1);
@@ -60,7 +60,7 @@ TORCH_LIBRARY_EXPAND(TORCH_EXTENSION_NAME, ops) {
       "    int max_seq_len, Tensor? alibi_slopes,"
       "    str kv_cache_dtype, Tensor k_scale, Tensor v_scale,"
       "    Tensor? golay_syndrome_lut, Tensor? golay_stats, Tensor? hamming_stats,"
-      "    int tp_rank, int blocksparse_local_blocks,"
+      "    Tensor? rs_stats, int tp_rank, int blocksparse_local_blocks,"
       "    int blocksparse_vert_stride, int blocksparse_block_size,"
       "    int blocksparse_head_sliding_step) -> ()");
   ops.impl("paged_attention_v2", torch::kCUDA, &paged_attention_v2);
@@ -765,7 +765,7 @@ TORCH_LIBRARY_EXPAND(CONCAT(TORCH_EXTENSION_NAME, _cache_ops), cache_ops) {
       "Tensor block_table, Tensor cu_seq_lens, Tensor seq_starts, "
       "Tensor k_scale, Tensor v_scale, "
       "str kv_cache_dtype, "
-      "Tensor? golay_syndrome_lut, Tensor? golay_stats, Tensor? hamming_stats) -> ()");
+      "Tensor? golay_syndrome_lut, Tensor? golay_stats, Tensor? hamming_stats, Tensor? rs_stats) -> ()");
   cache_ops.impl("cp_gather_and_ecc_decode_kv_cache", torch::kCUDA,
                  &cp_gather_and_ecc_decode_kv_cache);
 

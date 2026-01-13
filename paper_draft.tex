@@ -1,0 +1,1408 @@
+\documentclass{article}
+
+\usepackage{microtype}
+\usepackage{graphicx}
+\usepackage{subfigure}
+\usepackage{booktabs}
+\usepackage{hyperref}
+\usepackage{amsmath}
+\usepackage{amssymb}
+\usepackage{mathtools}
+\usepackage{amsthm}
+\usepackage[capitalize,noabbrev]{cleveref}
+\usepackage{algorithm}
+\usepackage{algpseudocode}
+\usepackage{url}
+\usepackage{amsthm}
+\theoremstyle{definition}
+\newtheorem{example}{Example}
+
+\newcommand{\theHalgorithm}{\arabic{algorithm}}
+
+\usepackage[accepted]{said2026}
+
+\theoremstyle{plain}
+\newtheorem{theorem}{Theorem}[section]
+\newtheorem{proposition}[theorem]{Proposition}
+\newtheorem{lemma}[theorem]{Lemma}
+\theoremstyle{definition}
+\newtheorem{definition}[theorem]{Definition}
+
+\icmltitlerunning{Stabilizing Quantized KV Caches via Subspace Embeddings and Manifold Interpolation}
+
+\begin{document}
+
+\twocolumn[
+\icmltitle{Stabilizing Quantized KV Caches via Subspace Embeddings and Manifold Interpolation}
+
+\begin{icmlauthorlist}
+\icmlauthor{Indrajeet Aditya Roy}{neu}
+\end{icmlauthorlist}
+
+\icmlaffiliation{neu}{Mathematics Department, College of Sciences, Northeastern University, Boston, MA, USA}
+
+\icmlcorrespondingauthor{Indrajeet Aditya Roy}{roy.i@northeastern.edu}
+
+\icmlkeywords{}
+
+\vskip 0.3in
+]
+
+\printAffiliationsAndNotice{\icmlEqualContribution}
+
+\begin{abstract}
+Large Language Models (LLMs) function as autoregressive predictors, computing
+attention over a cached history of key--value projections to avoid the $O(T^2)$
+cost of recomputation \cite{vaswani2017attention, kwon2023efficient}. As context
+lengths grow, memory constraints necessitate aggressive quantization of these
+caches to low-precision integer representations \cite{liu2024kivi, hooper2024kv}.
+
+This quantization introduces a \emph{metric mismatch} between storage and semantic
+spaces: perturbations measured by Hamming distance in the storage domain do not
+correspond to bounded perturbations in Euclidean distance after dequantization
+\cite{dettmers2022llm}. Consequently, bit-level errors manifest as sparse,
+large-magnitude impulse vectors that can collapse the attention distribution onto
+corrupted entries, causing catastrophic model failure.
+
+A linear-algebraic framework is proposed for stabilizing quantized KV caches using
+classical error-correcting codes \cite{macwilliams1977theory}. Quantized values are
+embedded into higher-dimensional subspaces over $\mathbb{F}_2$ via the generator
+matrices of Hamming and Golay codes, enabling syndrome-based detection and
+correction of bit-flip errors before the values are lifted back to $\mathbb{R}^d$
+\cite{huang1984algorithm}. For errors beyond the correction capacity, a geometric
+recovery strategy is employed, exploiting the local smoothness of the cache
+sequence through linear interpolation of detected erasures.
+
+Experiments on GPT-2 and LLaMA-3.1-8B \cite{radford2019language, dubey2024llama}
+demonstrate that at bit error rates up to $10^{-2}$, unprotected caches
+diverge catastrophically, while protected caches maintain baseline performance.
+\end{abstract}
+
+\section{Introduction}
+\label{sec:intro}
+
+Large Language Models (LLMs) can be viewed as high-dimensional dynamical systems
+governed by linear algebraic operations. These systems function as
+\emph{autoregressive} predictors: they generate sequences recursively, where the
+output of step $t$ conditions the computation at step $t+1$
+\cite{radford2019language}.
+
+From a mathematical standpoint, this recursion creates a distinct complexity
+challenge. At every time step, the model must evaluate inner products between a
+current query vector and the entire history of key vectors. Naively recomputing
+these projections at every step implies a complexity of $\mathcal{O}(T^2)$ for a
+sequence of length $T$.
+
+To resolve this, implementations employ a caching strategy known as the
+\emph{Key--Value (KV) cache} \cite{kwon2023efficient}. Rather than recomputing
+projections over the entire history, the system stores the projected vectors in
+two growing matrices, $K, V \in \mathbb{R}^{T \times d}$. Each new token requires
+only appending one row and computing a single matrix--vector product, reducing
+per-step complexity to $\mathcal{O}(T)$. However, as context lengths grow
+($T \to 10^5$), the memory required to store these matrices in high-precision
+floating point becomes intractable \cite{liu2024kivi}.
+
+The standard solution is quantization: a discretization map that projects
+continuous vectors in $\mathbb{R}^d$ onto low-precision integer representations
+(e.g., 4-bit integers with 16 discrete levels) \cite{frantar2023gptq}. While this
+compression reduces memory by $4\times$ relative to FP16, it fundamentally alters
+the algebraic structure of the cached representations.
+
+In high-precision arithmetic, quantization error is typically modeled as
+small-magnitude additive noise ($\epsilon \sim \mathcal{N}(0, \sigma^2)$), which
+averages out in high-dimensional inner products. In the regime of 4-bit integers,
+however, a different failure mode emerges. Due to the weighted positional encoding
+of binary representations, a single bit-flip does not act as Gaussian noise---it
+acts as a sparse, large-magnitude impulse in the vector space
+\cite{dettmers2022llm}. A flip in the most significant bit of an INT4 value can
+shift it by $\pm 8$ quantization levels, inducing a perturbation comparable to the
+full dynamic range. When such corrupted vectors participate in attention
+computation, the exponential amplification of softmax concentrates probability
+mass on corrupted entries, causing the output distribution to collapse
+\cite{xiao2023efficient}.
+
+Such bit-level perturbations arise from multiple sources in practice: DRAM soft
+errors from cosmic radiation, voltage noise in aggressive low-power regimes, and
+approximation errors in emerging compute-in-memory architectures
+\cite{huang1984algorithm}. As quantization pushes representations toward their
+information-theoretic limits, the margin for such perturbations shrinks, making
+error resilience increasingly critical.
+
+This work addresses this instability as a problem of \emph{linear algebra over
+finite fields}. The core insight is that while attention computation operates over
+$\mathbb{R}^d$, the integrity of quantized cache entries is naturally modeled over
+the binary vector space $\mathbb{F}_2^n$. This separation motivates the
+application of classical error-correcting codes (ECC) as an algebraic protection
+layer \cite{macwilliams1977theory}.
+
+A framework is proposed in which quantized values are embedded into
+higher-dimensional subspaces defined by the generator matrices of Hamming and
+Golay codes. The null-space characterization provided by parity-check matrices
+enables $O(1)$ syndrome-based detection and correction of bit errors before values
+are lifted back to $\mathbb{R}^d$. For errors exceeding the code's correction
+capacity, a geometric recovery strategy is employed that exploits the local
+smoothness of cache sequences through linear interpolation of detected
+erasures---bridging discrete coding theory with continuous manifold assumptions.
+
+\paragraph{Contributions.} This work makes the following contributions:
+\begin{enumerate}
+    \item The \emph{metric mismatch} problem in quantized KV caches is formalized,
+    demonstrating how bit-level errors in Hamming space induce unbounded
+    perturbations in Euclidean space, leading to catastrophic attention collapse.
+
+    \item GPU-accelerated Triton kernels are developed for Hamming(7,4),
+    Hamming(8,4) SECDED, and Golay(24,12) encoding and decoding, fused directly into
+    the attention computation to minimize overhead.
+
+    \item \emph{Manifold-aware interpolation} is introduced for recovering
+    SECDED-detected double errors, demonstrating that this lightweight geometric
+    heuristic achieves robustness equivalent to Golay's algebraically stronger
+    three-error correction.
+
+    \item The framework is validated on GPT-2 and LLaMA-3.1-8B, showing that at
+    bit error rates up to $10^{-2}$, unprotected INT4 caches fail catastrophically
+    (perplexity $>1000$), while protected caches maintain baseline performance with
+    zero catastrophic failures across all trials.
+\end{enumerate}
+
+\section{Background}
+\label{sec:background}
+
+\subsection{The Linear Algebra of Attention}
+
+Large Language Models (LLMs) are composed of stacked \emph{Transformer layers},
+each applying a sequence of linear algebraic operations followed by non-linear
+activations. The computational core of each layer is the \emph{Attention Mechanism}
+\cite{vaswani2017attention}, which acts as a data-dependent aggregation operator,
+computing a new state vector as a convex combination of historical vectors.
+
+Let the input at position $t$ be represented by a vector $\mathbf{x} \in
+\mathbb{R}^d$. The layer applies three parallel linear transformations
+parameterized by weight matrices $W_Q, W_K, W_V \in \mathbb{R}^{d \times d_k}$,
+mapping the input into query, key, and value representations:
+\begin{equation}
+\mathbf{q} = \mathbf{x} W_Q, \quad \mathbf{k} = \mathbf{x} W_K, \quad
+\mathbf{v} = \mathbf{x} W_V,
+\end{equation}
+where $d_k$ is the per-head dimension (typically $d_k = d / h$ for $h$ attention
+heads). For clarity, the single-head case is presented; multi-head attention
+applies this mechanism in parallel across $h$ independent subspaces.
+
+\subsubsection{Attention Score Computation}
+
+The system maintains a history of the sequence through position $t$. Let
+$K \in \mathbb{R}^{t \times d_k}$ and $V \in \mathbb{R}^{t \times d_k}$ be matrices
+whose $i$-th rows contain the key and value vectors from position $i$.
+
+The attention mechanism computes a score vector $\mathbf{s} \in \mathbb{R}^t$ by
+evaluating scaled inner products between the current query and all historical keys:
+\begin{equation}
+\mathbf{s} = \frac{\mathbf{q} K^\top}{\sqrt{d_k}},
+\end{equation}
+where the $\sqrt{d_k}$ scaling prevents dot products from growing with dimension,
+stabilizing gradient flow during training \cite{vaswani2017attention}. Each
+component $s_i = \langle \mathbf{q}, \mathbf{k}_i \rangle / \sqrt{d_k}$ measures
+the alignment between the current query and the $i$-th historical key.
+
+In autoregressive generation, a causal mask ensures that position $t$ attends only
+to positions ${1, \ldots, t}$, enforcing the left-to-right dependency structure.
+
+\subsubsection{Softmax Normalization}
+
+The score vector $\mathbf{s}$ is mapped to the probability simplex
+$\Delta^{t-1} = {\boldsymbol{\alpha} \in \mathbb{R}^t : \alpha_i \geq 0,
+\sum_i \alpha_i = 1}$ via the softmax function:
+\begin{equation}
+\boldsymbol{\alpha} = \mathrm{softmax}(\mathbf{s}), \quad \text{where }
+\alpha_i = \frac{\exp(s_i)}{\sum_{j=1}^{t} \exp(s_j)}.
+\end{equation}
+This normalization converts unbounded scores into a valid probability distribution
+over historical positions.
+
+\subsubsection{Output as Convex Combination}
+
+The output vector $\mathbf{z} \in \mathbb{R}^{d_k}$ is computed as the
+$\boldsymbol{\alpha}$-weighted sum of value vectors:
+\begin{equation}
+\mathbf{z} = \boldsymbol{\alpha}^\top V = \sum_{i=1}^{t} \alpha_i \mathbf{v}_i.
+\end{equation}
+Since $\boldsymbol{\alpha} \in \Delta^{t-1}$, the output lies in the convex hull
+of ${\mathbf{v}_1, \ldots, \mathbf{v}_t}$. When query $\mathbf{q}$ is orthogonal
+to key $\mathbf{k}_i$, the corresponding weight $\alpha_i \to 0$ and value
+$\mathbf{v}_i$ contributes negligibly. Conversely, high query–key alignment
+concentrates weight on the corresponding value.
+
+\paragraph{Vulnerability.}
+The vulnerability of interest arises from the storage of $K$ and $V$. In
+memory-constrained deployments, these matrices are quantized to low-precision
+formats (e.g., INT4) rather than stored in FP16. A bit-level perturbation to an
+entry in $K$ alters the inner product $\mathbf{q} K^\top$, potentially causing
+the softmax to concentrate probability mass on a corrupted entry. The exponential
+nature of softmax amplifies even moderate score perturbations: if a corrupted key
+produces an anomalously high score, nearly all attention weight shifts to the
+corresponding (potentially irrelevant) value, destabilizing the output
+\cite{xiao2023efficient}.
+
+\subsection{Recursive Matrix Formulation (The KV Cache)}
+
+In a direct implementation of autoregressive attention, the score vector $\mathbf{s}$
+would require computing inner products against the entire history at every time step.
+At step $t$, this costs $\mathcal{O}(t \cdot d)$ operations. Summing over all steps
+yields a cumulative complexity of $\sum_{t=1}^T \mathcal{O}(t \cdot d) =
+\mathcal{O}(T^2 d)$, which becomes intractable for long sequences.
+
+To resolve this, the computation is reformulated recursively. Since past key-value
+pairs are immutable during autoregressive generation, the system caches them rather
+than recomputing. At step $t$, only the new vectors $\mathbf{k}_t$ and
+$\mathbf{v}_t$ are computed and appended:
+\begin{equation}
+K_t = \begin{bmatrix} K_{t-1} \\ \mathbf{k}_t \end{bmatrix}, \qquad
+V_t = \begin{bmatrix} V_{t-1} \\ \mathbf{v}_t \end{bmatrix}.
+\end{equation}
+This \emph{Key--Value (KV) cache} \cite{kwon2023efficient} reduces per-step
+complexity to $\mathcal{O}(T \cdot d)$: a single matrix-vector product against the
+cached history.
+
+\paragraph{Memory Bottleneck.}
+The KV cache transforms the computational bottleneck into a memory bottleneck. For a
+model with $L$ layers, $h$ KV heads, and head dimension $d_k$, the cache stores
+$2 \cdot L \cdot h \cdot T \cdot d_k$ values. Table~\ref{tab:complexity_tradeoff}
+illustrates this tradeoff. For a standard 8B parameter model using Grouped Query
+Attention (GQA), a modest batch size of 4 fills an entire A100 GPU at 128k context.
+
+\begin{table}[t]
+    \centering
+    \begin{tabular}{r c c c}
+        \toprule
+        \textbf{Context} & \textbf{Cumulative FLOPs} & \textbf{KV Cache} & \textbf{KV Cache} \\
+        \textbf{Length ($T$)} & \textbf{(no cache)} & \textbf{(FP16)} & \textbf{(INT4)} \\
+        \midrule
+        1{,}000   & $\mathcal{O}(10^6)$    & 0.5\,GB  & 0.13\,GB \\
+        10{,}000  & $\mathcal{O}(10^8)$    & 5.0\,GB  & 1.25\,GB \\
+        100{,}000 & $\mathcal{O}(10^{10})$ & 50.0\,GB & 12.5\,GB \\
+        128{,}000 & $\mathcal{O}(10^{10})$ & 64.0\,GB & 16.0\,GB \\
+        \bottomrule
+    \end{tabular}
+    \caption{\textbf{Computational vs.\ Storage Complexity.} Without caching,
+    autoregressive generation has $\mathcal{O}(T^2)$ cumulative complexity. The KV
+    cache reduces this to $\mathcal{O}(T)$ per step but introduces storage overhead.
+    Values shown assume a Batch Size of 4 on LLaMA-3-8B ($L=32$, $h=8$
+    KV heads, $d_k=128$), yielding 64K values per token per sequence. INT4
+    quantization provides $4\times$ compression, making long-context high-throughput
+    inference feasible.}
+    \label{tab:complexity_tradeoff}
+\end{table}
+
+For large context windows ($T \geq 10^5$), the KV cache can exceed GPU
+high-bandwidth memory (HBM) capacity—typically 40--80\,GB on datacenter
+accelerators. This motivates quantization: an element-wise discretization
+map $\Pi: \mathbb{R} \to \mathcal{Q}$ that projects each cache entry onto a
+finite set $\mathcal{Q}$ of low-precision levels (e.g., $|\mathcal{Q}| = 16$ for
+4-bit integers) \cite{hooper2024kv}. As shown in Table~\ref{tab:complexity_tradeoff},
+INT4 quantization reduces storage by $4\times$, keeping the memory footprint
+tractable even at high batch sizes.
+
+\subsection{Algebraic Instability of Discretized Storage}
+
+  Memory constraints require cache values to be discretized through an element-wise
+  mapping $\Pi : \mathbb{R} \rightarrow \mathcal{S}$, where $\mathcal{S} \subset
+  \mathbb{Z}$ is a finite set of representable integers (e.g., $\mathcal{S} =
+  \{0, 1, \ldots, 15\}$ for INT4). This creates a mixed algebraic setting: the query
+  vector $\mathbf{q} \in \mathbb{R}^d$ remains in continuous precision, while the
+  cached matrices $K$ and $V$ are discrete approximations.
+
+  This discretization introduces two distinct sources of error:
+  \begin{enumerate}
+      \item \textbf{Quantization Error:} A bounded, deterministic error
+      $\|\mathbf{x} - \Pi(\mathbf{x})\|$, typically modeled as uniform additive
+      noise with magnitude at most half the quantization step size.
+
+      \item \textbf{Bit-Flip Errors:} Stochastic perturbations to the binary
+      representation of stored integers, arising from DRAM soft errors, voltage
+      noise in low-power regimes, or approximation in emerging memory technologies.
+  \end{enumerate}
+  While quantization error is bounded and well-characterized, bit-flip errors pose
+  a fundamentally different challenge. The storage channel is modeled as a Binary
+  Symmetric Channel (BSC) with bit error rate (BER) $p$: each bit of a stored
+  integer independently flips with probability $p$.
+
+  \subsubsection{The Metric Mismatch}
+
+  The core instability arises from a \emph{metric mismatch} between the storage
+  domain and the semantic domain. In storage, errors are naturally measured by
+  \emph{Hamming distance}---the number of differing bits---where a single bit flip
+  has unit cost \cite{macwilliams1977theory}. However, when binary strings are
+  interpreted as integers via positional encoding, bit positions carry exponentially
+  different weights.
+
+  \begin{example}[INT4 Metric Mismatch]
+  Consider a 4-bit unsigned integer with value $v = \sum_{i=0}^{3} b_i \cdot 2^i$.
+  A flip in bit $i$ changes the value by $\pm 2^i$:
+  \begin{itemize}
+      \item LSB flip ($i=0$): $\Delta v = \pm 1$ \quad (6\% of range)
+      \item MSB flip ($i=3$): $\Delta v = \pm 8$ \quad (50\% of range)
+  \end{itemize}
+  A single-bit error in Hamming space (distance 1) can induce a perturbation
+  spanning half the quantization range in Euclidean space.
+  \end{example}
+
+  More generally, for a $B$-bit integer representation, the ratio between maximum
+  and minimum single-bit perturbations is $2^{B-1}$. This exponential disparity
+  means that uniform errors in Hamming distance produce highly non-uniform errors
+  in Euclidean distance. A cache entry corrupted by a high-order bit flip becomes
+  an \emph{outlier} whose magnitude may exceed all legitimate values.
+
+  \subsubsection{Propagation Through Softmax}
+
+  This perturbation propagates catastrophically through the attention mechanism.
+  Let $\tilde{\mathbf{k}} = \mathbf{k} + \mathbf{e}$ denote a corrupted key vector,
+  where $\mathbf{e}$ is sparse (few corrupted entries) but potentially large in
+  magnitude. The perturbed attention score becomes:
+  \begin{equation}
+  \tilde{s} = \langle \mathbf{q}, \tilde{\mathbf{k}} \rangle
+  = \underbrace{\langle \mathbf{q}, \mathbf{k} \rangle}_{\text{true score}}
+  + \underbrace{\langle \mathbf{q}, \mathbf{e} \rangle}_{\text{error term}}.
+  \end{equation}
+  When $\|\mathbf{e}\|$ is large, the error term can dominate, producing an
+  anomalously high (or low) score for the corrupted position.
+
+  The softmax function's exponential form amplifies this distortion. If the
+  corrupted score $\tilde{s}_i$ exceeds other scores by margin $\delta$, the
+  attention weight becomes:
+  \begin{equation}
+  \alpha_i = \frac{\exp(\tilde{s}_i)}{\sum_j \exp(s_j)}
+  \approx \frac{\exp(\tilde{s}_i)}{\exp(\tilde{s}_i)} = 1
+  \quad \text{as } \delta \to \infty.
+  \end{equation}
+  The result is an approximately one-hot distribution concentrating nearly all
+  probability mass on the corrupted entry. The attention mechanism then retrieves
+  the corresponding value $\mathbf{v}_i$---which may be entirely irrelevant to the
+  query---while ignoring the valid context.
+
+  This failure mode is catastrophic rather than
+  graceful. A single corrupted cache entry can derail generation for an entire
+  sequence, causing the model to produce repetitive or incoherent text. In the
+  experiments described in Section~\ref{sec:experiments}, unprotected INT4 caches
+  at BER $= 10^{-2}$ exhibit perplexity exceeding $1000\times$ the baseline, with
+  100\% of samples experiencing catastrophic failure.
+  
+\section{Related Work}
+\label{sec:related}
+
+\subsection{KV Cache Compression}
+
+The memory bottleneck imposed by KV caches has motivated substantial work on
+compression techniques. Quantization-based approaches reduce the bit-width of
+cached values: KVQuant \cite{hooper2024kv} applies per-channel quantization with
+outlier handling to achieve 3-bit keys and 2-bit values; KIVI \cite{liu2024kivi}
+introduces asymmetric quantization treating keys and values differently based on
+their distributional properties; and Atom \cite{zhao2024atom} combines
+mixed-precision quantization with fine-grained reordering. These methods focus on
+minimizing quantization error under the assumption of error-free storage.
+
+Sparsity and eviction strategies reduce cache size by selectively retaining
+entries. H$_2$O \cite{zhang2024h2o} identifies ``heavy hitter'' tokens that
+accumulate disproportionate attention mass and evicts low-value entries.
+StreamingLLM \cite{xiao2023efficient} observes the ``attention sink'' phenomenon
+where initial tokens serve as stabilizing anchors and proposes retaining a
+sliding window plus sink tokens. Scissorhands \cite{liu2023scissorhands} exploits
+persistence of importance across layers to prune redundant cache entries.
+
+Architectural modifications avoid materialized caches entirely. Multi-Query
+Attention (MQA) \cite{shazeer2019fast} and Grouped-Query Attention (GQA)
+\cite{ainslie2023gqa} share key-value heads across query heads, reducing cache
+size by factors of $h$ or $h/g$ respectively. Linear attention variants
+\cite{katharopoulos2020transformers} replace softmax with kernel approximations
+enabling $\mathcal{O}(1)$ recurrent state, though often at the cost of model
+quality.
+
+This work is orthogonal to these approaches: it addresses the \emph{integrity} of
+cached values rather than their \emph{size}. ECC protection can be composed with
+any quantization scheme, adding resilience without modifying the compression
+strategy.
+
+\subsection{Quantization for Large Language Models}
+
+Post-training quantization (PTQ) enables deployment of large models without
+retraining. GPTQ \cite{frantar2023gptq} formulates weight quantization as a
+layer-wise reconstruction problem, using approximate second-order information for
+optimal rounding. AWQ \cite{lin2024awq} identifies activation-aware salient
+weights and applies per-channel scaling to protect them. SmoothQuant
+\cite{xiao2023smoothquant} migrates quantization difficulty from activations to
+weights via mathematically equivalent transformations.
+
+For activations and KV caches, the challenge differs: values are not known at
+quantization time and exhibit dynamic ranges that vary across sequences.
+LLM.int8() \cite{dettmers2022llm} addresses activation outliers through
+mixed-precision decomposition, processing outlier dimensions in FP16. This work
+provides key empirical evidence for the \emph{outlier emergence} phenomenon in
+quantized transformers---the observation that certain dimensions develop
+systematically large magnitudes that dominate quantization error.
+
+The present framework builds on the insight from \cite{dettmers2022llm} that
+low-precision representations are vulnerable to large-magnitude perturbations, but
+addresses \emph{stochastic} bit-level errors rather than \emph{deterministic}
+quantization artifacts.
+
+\subsection{Error-Correcting Codes in Computing Systems}
+
+Classical coding theory \cite{macwilliams1977theory} provides algebraic tools for
+detecting and correcting errors in digital communication and storage. Hamming
+codes \cite{hamming1950error} achieve single-error correction (SEC) with minimal
+redundancy; extended Hamming codes add double-error detection (SECDED) at the cost
+of one additional parity bit. Golay codes \cite{golay1949notes} provide stronger
+protection---the binary Golay code $\mathcal{G}_{24}$ corrects up to 3 errors in
+24 bits---and are used in deep-space communication where retransmission is
+infeasible.
+
+In computer architecture, ECC memory (ECC DRAM) protects against soft errors
+caused by cosmic radiation and alpha particle strikes \cite{baumann2005radiation}.
+Standard ECC DIMMs implement SECDED at the 64-bit word level, adding 8 parity bits
+per word. However, this protection operates at the memory controller level and is
+transparent to software---applications cannot leverage stronger codes or
+application-specific error handling.
+
+Algorithm-Based Fault Tolerance (ABFT) \cite{huang1984algorithm} takes a different
+approach, embedding checksums directly into matrix computations. For matrix
+multiplication $C = AB$, ABFT encodes $A$ and $B$ with row/column checksums that
+propagate through the computation, enabling detection and correction of errors in
+$C$. Extensions protect LU factorization \cite{davies1997algorithm}, iterative
+solvers \cite{chen2008algorithm}, and FFTs \cite{wang1994algorithm}.
+
+This work applies classical block codes at the \emph{value level} rather than the
+word or matrix level, protecting individual quantized cache entries with
+application-aware encoding that accounts for the semantic importance of different
+bit positions.
+
+\subsection{Fault Tolerance in Neural Networks}
+
+Neural network resilience to hardware faults has been studied primarily in the
+context of safety-critical deployment. Reagen et al.\ \cite{reagen2018ares}
+characterize the vulnerability of DNN accelerators to soft errors, finding that
+certain layers and weight bits are disproportionately sensitive. Li et al.\ 
+\cite{li2017understanding} systematically inject faults into CNN inference,
+observing that errors in later layers and in high-magnitude weights cause the
+most severe accuracy degradation.
+
+Selective protection strategies allocate redundancy non-uniformly based on
+vulnerability analysis. Mahmoud et al.\ \cite{mahmoud2020hardnn} protect only the
+most critical neurons identified through gradient-based sensitivity analysis. Chen
+et al.\ \cite{chen2019ranger} propose range restriction to bound the effect of bit
+flips, clipping activations to valid ranges.
+
+For transformer architectures specifically, attention mechanisms present unique
+vulnerabilities due to the softmax nonlinearity. Heo et al.\ 
+\cite{heo2023analyzing} analyze fault propagation in vision transformers, finding
+that errors in attention logits are amplified more severely than errors in MLP
+layers. However, this line of work focuses on \emph{weight} errors during
+inference rather than \emph{activation} errors in cached values.
+
+\subsection{Efficient Inference Systems}
+
+Production LLM serving systems have driven innovations in memory management and
+batching. vLLM \cite{kwon2023efficient} introduces \emph{PagedAttention}, managing
+KV cache memory in non-contiguous blocks analogous to virtual memory paging. This
+enables efficient memory sharing across requests and reduces fragmentation. The
+implementation presented here builds on PagedAttention's block-based cache
+organization, applying ECC encoding at the block level.
+
+FlashAttention \cite{dao2022flashattention, dao2023flashattention2} fuses attention
+computation into a single kernel pass, reducing memory bandwidth by avoiding
+materialization of the full attention matrix. FlashDecoding \cite{flashdecoding}
+extends this to the decode phase with parallelization across the KV cache sequence
+dimension. The ECC kernels follow a similar philosophy, fusing encode/decode
+operations with cache access to minimize overhead.
+
+Speculative decoding \cite{leviathan2023fast, chen2023accelerating} addresses
+latency by drafting multiple tokens with a smaller model and verifying with the
+target model. This is orthogonal to the present contribution but highlights the
+importance of cache integrity: speculative tokens that rely on corrupted cache
+entries would propagate errors through the verification step.
+
+\section{Theoretical Framework}
+\label{sec:theory}
+
+Having established that the metric mismatch between Hamming and Euclidean spaces destabilizes the attention mechanism, this section formulates a protection strategy. The integrity of the cached matrices $K$ and $V$ is framed as a linear algebra problem over the finite field $\mathbb{F}_2$ \cite{macwilliams1977theory}.
+
+\subsection{Stochastic Error Model over $\mathbb{F}_2$}
+
+The storage interface is modeled as a \emph{Binary Symmetric Channel} (BSC). Let quantized integer values be represented as vectors in the finite-dimensional vector space $\mathbb{F}_2^k$, where $k$ is the number of bits per value (e.g., $k=4$ for INT4).
+
+To facilitate error correction, a linear encoding map $\phi: \mathbb{F}_2^k \to \mathbb{F}_2^n$ is defined with $n > k$. Let $\mathbf{c} \in \mathbb{F}_2^n$ be the stored codeword. The retrieval process through a noisy channel yields:
+\begin{equation}
+\mathbf{r} = \mathbf{c} \oplus \mathbf{e},
+\end{equation}
+where $\oplus$ denotes addition in $\mathbb{F}_2$ (equivalently, bitwise XOR), and $\mathbf{e} \in \mathbb{F}_2^n$ is a stochastic error vector.
+
+The components of $\mathbf{e} = [e_1, \dots, e_n]$ are modeled as independent Bernoulli random variables with bit error rate (BER) $p$:
+\begin{equation}
+\Pr(e_i = 1) = p, \quad \Pr(e_i = 0) = 1 - p.
+\end{equation}
+The expected Hamming weight of the error vector is $\mathbb{E}[w_H(\mathbf{e})] = np$. For an 8-bit codeword at BER $p = 10^{-2}$, this yields an expected 0.08 errors per codeword, or approximately 1 error per 12 codewords.
+
+\begin{table}[t]
+\centering
+\small
+\begin{tabular}{cccc}
+\toprule
+\textbf{BER ($p$)} & \textbf{Frequency} & \textbf{Expected Errors} & \textbf{Regime} \\
+ & & \textbf{per 8-bit word} & \\
+\midrule
+$10^{-4}$ & 1 in $10^4$ bits & $8 \times 10^{-4}$ & Sparse \\
+$10^{-3}$ & 1 in $10^3$ bits & $8 \times 10^{-3}$ & Moderate \\
+$10^{-2}$ & 1 in $10^2$ bits & $8 \times 10^{-2}$ & Dense \\
+\bottomrule
+\end{tabular}
+\caption{\textbf{Bit Error Rate Regimes.} Expected errors per 8-bit codeword under the BSC model. At $p = 10^{-2}$, approximately 1 in 12 codewords experiences at least one bit flip, challenging the correction capacity of single-error-correcting codes.}
+\label{tab:ber_levels}
+\end{table}
+
+Table~\ref{tab:ber_levels} summarizes the three BER regimes analyzed in this work. The dense regime ($p = 10^{-2}$) is particularly significant: the high error density challenges the correction capacity of standard codes, motivating the stronger constructions developed in Section~\ref{sec:codes}.
+
+\subsection{Subspace Embeddings via Linear Block Codes}
+
+The protection mechanism restricts valid representations to a $k$-dimensional linear subspace $\mathcal{C} \subset \mathbb{F}_2^n$, called a \emph{linear code}. By embedding $k$-bit data into an $n$-bit space with $n > k$, the encoding introduces $n - k$ bits of redundancy. This redundancy creates geometric separation between valid codewords, enabling detection and correction of errors \cite{macwilliams1977theory}.
+
+The construction relies on two dual characterizations of $\mathcal{C}$: as the \emph{image} of a generator matrix (for encoding) and as the \emph{kernel} of a parity-check matrix (for decoding).
+
+\subsubsection{Generator Matrix and Encoding}
+
+Encoding is defined by an injective linear map $\phi : \mathbb{F}_2^k \to \mathbb{F}_2^n$ represented by a \emph{generator matrix} $G \in \mathbb{F}_2^{k \times n}$ of full row rank:
+\begin{equation}
+\mathcal{C} = \operatorname{Im}(G) = \{ \mathbf{d}G \mid \mathbf{d} \in \mathbb{F}_2^k \}.
+\end{equation}
+For data vector $\mathbf{d}$, the codeword is $\mathbf{c} = \mathbf{d}G$.
+
+Systematic generator matrices of the form $G = [I_k \mid P]$ are employed, where $I_k$ is the $k \times k$ identity and $P \in \mathbb{F}_2^{k \times (n-k)}$ specifies the parity computation. This form preserves data bits in the first $k$ positions of the codeword:
+\begin{equation}
+\mathbf{c} = \mathbf{d}G = [\mathbf{d} \mid \mathbf{d}P] =
+[\underbrace{d_1, \ldots, d_k}_{\text{data}} \mid
+\underbrace{p_1, \ldots, p_{n-k}}_{\text{parity}}].
+\end{equation}
+This property is critical for latency: in the absence of errors, the data can be read directly without decoding logic.
+
+\subsubsection{Parity-Check Matrix and the Kernel Characterization}
+
+For decoding, it is more efficient to characterize $\mathcal{C}$ as the kernel of a \emph{parity-check matrix} $H \in \mathbb{F}_2^{(n-k) \times n}$:
+\begin{equation}
+\mathcal{C} = \ker(H) = \{ \mathbf{x} \in \mathbb{F}_2^n \mid H\mathbf{x}^\top = \mathbf{0} \}.
+\end{equation}
+
+For a systematic generator $G = [I_k \mid P]$, the corresponding parity-check matrix is:
+\begin{equation}
+H = [P^\top \mid I_{n-k}].
+\end{equation}
+The duality condition $GH^\top = \mathbf{0}$ ensures that all codewords satisfy the parity constraints: $\mathbf{c} \in \mathcal{C} \Rightarrow H\mathbf{c}^\top = \mathbf{0}$.
+
+\subsubsection{Minimum Distance and Correction Capability}
+
+The error-correction capability of a code is determined by the geometric separation between codewords.
+
+\begin{definition}[Minimum Distance]
+The \textbf{minimum distance} of a linear code $\mathcal{C}$ is:
+\begin{equation}
+d_{\min} = \min_{\mathbf{c}_1 \neq \mathbf{c}_2 \in \mathcal{C}}
+w_H(\mathbf{c}_1 \oplus \mathbf{c}_2) = \min_{\mathbf{c} \in \mathcal{C},
+\mathbf{c} \neq \mathbf{0}} w_H(\mathbf{c}),
+\end{equation}
+where the second equality follows from linearity.
+\end{definition}
+
+A code with minimum distance $d$ can:
+\begin{itemize}
+    \item \textbf{Detect} all error patterns of weight $\leq d - 1$.
+    \item \textbf{Correct} all error patterns of weight $\leq t = \lfloor(d-1)/2\rfloor$.
+\end{itemize}
+
+\subsubsection{Syndrome Decoding}
+
+Given a received vector $\mathbf{r} = \mathbf{c} \oplus \mathbf{e}$, the decoder must recover $\mathbf{c}$ (or equivalently, identify $\mathbf{e}$). This is accomplished via the \emph{syndrome}.
+
+\begin{definition}[Syndrome]
+For parity-check matrix $H \in \mathbb{F}_2^{(n-k) \times n}$ and received vector $\mathbf{r} \in \mathbb{F}_2^n$, the \textbf{syndrome} is:
+\begin{equation}
+\mathbf{z} = H\mathbf{r}^\top \in \mathbb{F}_2^{n-k}.
+\end{equation}
+\end{definition}
+
+Since $\mathbf{c} \in \ker(H)$, we have $\mathbf{z} = H(\mathbf{c} \oplus \mathbf{e})^\top = H\mathbf{e}^\top$. The syndrome depends \emph{only on the error pattern}, not the transmitted data.
+
+For codes with small syndrome spaces (e.g., $2^3 = 8$ or $2^{12} = 4096$), the mapping from syndrome $\mathbf{z}$ to the most likely error pattern $\hat{\mathbf{e}}$ (the coset leader) can be precomputed in a lookup table. The corrected codeword is $\hat{\mathbf{c}} = \mathbf{r} \oplus \hat{\mathbf{e}}$.
+
+\subsection{Hierarchy of Algebraic Protection}
+
+This framework is instantiated with three specific codes of increasing strength:
+
+\begin{enumerate}
+    \item \textbf{Hamming(7,4) [SEC]:} A perfect code with $d_{\min}=3$. It embeds $k=4$ data bits into $n=7$ bits. It corrects any single-bit error ($t=1$) but inevitably miscorrects double errors as single errors.
+    
+    \item \textbf{Extended Hamming(8,4) [SECDED]:} Adds a parity bit to Hamming(7,4), increasing distance to $d_{\min}=4$. It corrects single errors and \emph{detects} double errors. This detection property is the foundation of the interpolation strategy presented here.
+    
+    \item \textbf{Binary Golay(24,12):} A perfect code with $d_{\min}=8$, capable of correcting up to $t=3$ errors. It provides the strongest protection but requires significantly larger lookup tables.
+\end{enumerate}
+
+\section{Specific Code Constructions}
+\label{sec:codes}
+
+Having established the general framework of subspace embeddings, specific code constructions are analyzed in this section. The central trade-off is between error-correction capability (determined by minimum distance $d_{\min}$) and storage overhead (determined by the rate $R = k/n$). Three codes of increasing strength are presented: Hamming(7,4) for single-error correction, extended Hamming(8,4) for single-error correction with double-error detection, and Golay(24,12) for triple-error correction.
+
+\subsection{The Hamming(7,4) Code}
+
+The Hamming(7,4) code is an $[n,k,d] = [7,4,3]$ linear code that embeds 4-bit data into 7-bit codewords, achieving single-error correction ($t=1$) with 75\% storage overhead \cite{macwilliams1977theory}.
+
+\subsubsection{Construction}
+
+The parity-check matrix $H \in \mathbb{F}_2^{3 \times 7}$ is constructed by taking all $2^3 - 1 = 7$ non-zero vectors of $\mathbb{F}_2^3$ as columns. To ensure a systematic memory layout, the columns are permuted such that the identity matrix appears in the last 3 positions:
+\begin{equation}
+H =
+\begin{bmatrix}
+1 & 1 & 0 & 1 & 1 & 0 & 0 \\
+1 & 0 & 1 & 1 & 0 & 1 & 0 \\
+0 & 1 & 1 & 1 & 0 & 0 & 1
+\end{bmatrix}.
+\label{eq:hamming74_H}
+\end{equation}
+
+The corresponding systematic generator matrix $G = [I_4 \mid P] \in \mathbb{F}_2^{4 \times 7}$, which satisfies $GH^\top = \mathbf{0}$, is:
+\begin{equation}
+G =
+\begin{bmatrix}
+1 & 0 & 0 & 0 & 1 & 1 & 0 \\
+0 & 1 & 0 & 0 & 1 & 0 & 1 \\
+0 & 0 & 1 & 0 & 0 & 1 & 1 \\
+0 & 0 & 0 & 1 & 1 & 1 & 1
+\end{bmatrix}.
+\label{eq:hamming74_G}
+\end{equation}
+Encoding data $\mathbf{d} = [d_0, d_1, d_2, d_3]$ produces the codeword $\mathbf{c} = \mathbf{d}G = [d_0, d_1, d_2, d_3, p_0, p_1, p_2]$, where the parity bits are computed as:
+\begin{align}
+p_0 &= d_0 \oplus d_1 \oplus d_3, \\
+p_1 &= d_0 \oplus d_2 \oplus d_3, \\
+p_2 &= d_1 \oplus d_2 \oplus d_3.
+\end{align}
+
+\subsubsection{Geometric Properties}
+
+The Hamming(7,4) code is a perfect code: the Hamming spheres of radius $t=1$ centered at codewords partition $\mathbb{F}_2^7$ exactly.
+
+\begin{definition}[Perfect Code]
+A code $\mathcal{C}$ with minimum distance $d = 2t+1$ is perfect if every vector in the ambient space lies within distance $t$ of exactly one codeword.
+\end{definition}
+
+For Hamming(7,4):
+\begin{itemize}
+    \item Minimum distance: $d_{\min} = 3$, enabling correction of $t = \lfloor(3-1)/2\rfloor = 1$ error.
+    \item Sphere-packing bound: Each radius-1 ball contains $\sum_{i=0}^{1} \binom{7}{i} = 1 + 7 = 8$ vectors. With $|\mathcal{C}| = 2^4 = 16$ codewords, total coverage is $16 \times 8 = 128 = 2^7 = |\mathbb{F}_2^7|$.
+\end{itemize}
+This property implies that every non-zero syndrome corresponds to a unique, correctable single-bit error pattern.
+
+\subsubsection{Syndrome Decoding}
+
+Decoding exploits the bijection between single-bit errors and columns of $H$. For an error $\mathbf{e}_j$ (a 1 in position $j$, zeros elsewhere):
+\begin{equation}
+\mathbf{z} = H\mathbf{e}_j^\top = \mathbf{h}_j \quad \text{(the $j$-th column of $H$)}.
+\end{equation}
+Since all columns of $H$ are distinct, the syndrome uniquely identifies the error position. Decoding reduces to a table lookup mapping $\mathbf{z} \mapsto j$.
+
+\begin{example}[Single-Error Correction]
+Consider data $\mathbf{d} = [0,1,0,0]$. Encoding yields:
+\[
+\mathbf{c} = [0,1,0,0] \cdot G = [0,1,0,0,1,0,1].
+\]
+If bit index 3 (the 4th bit) is corrupted, the received vector is:
+\[
+\mathbf{r} = [0,1,0,\mathbf{1},1,0,1].
+\]
+The syndrome is:
+\[
+\mathbf{z} = H\mathbf{r}^\top = \begin{bmatrix} 1 \\ 1 \\ 1 \end{bmatrix}.
+\]
+Comparison with Eq.~\ref{eq:hamming74_H} shows this matches column index 3 of $H$. Flipping this bit recovers the original codeword.
+\end{example}
+
+\subsubsection{Limitation: Double-Error Miscorrection}
+
+A critical limitation of Hamming(7,4) is its behavior under double errors. With $d_{\min} = 3$, a weight-2 error $\mathbf{e}$ produces a syndrome $\mathbf{z} = H\mathbf{e}^\top = \mathbf{h}_i \oplus \mathbf{h}_j$. Since $H$ contains all non-zero 3-bit vectors, this sum equals some other column $\mathbf{h}_k$. The decoder effectively ``hallucinates'' a single bit error at index $k$ and flips it, resulting in a weight-3 error.
+
+\begin{example}[Miscorrection]
+If errors occur at indices 0 and 1, the syndrome is:
+\[
+\mathbf{z} = \mathbf{h}_0 \oplus \mathbf{h}_1 =
+\begin{bmatrix}1\\1\\0\end{bmatrix} \oplus
+\begin{bmatrix}1\\0\\1\end{bmatrix} =
+\begin{bmatrix}0\\1\\1\end{bmatrix} = \mathbf{h}_2.
+\]
+The decoder incorrectly flips the bit at index 2. The corrected vector now differs from the original data by 3 bits.
+\end{example}
+
+This miscorrection behavior motivates the extended Hamming code, which detects double errors rather than miscorrecting them.
+
+\subsection{The Extended Hamming(8,4) Code}
+
+The miscorrection behavior of the Hamming(7,4) code under double errors motivates an extension. By appending a single overall parity bit, the minimum distance increases from $d=3$ to $d=4$, enabling SECDED: Single-Error Correction, Double-Error Detection.
+
+\subsubsection{Construction}
+
+The extended generator matrix $\bar{G} \in \mathbb{F}_2^{4 \times 8}$ appends an overall parity column to the systematic Hamming(7,4) generator:
+\begin{equation}
+\bar{G} =
+\begin{bmatrix}
+1 & 0 & 0 & 0 & 1 & 1 & 0 & 1 \\
+0 & 1 & 0 & 0 & 1 & 0 & 1 & 1 \\
+0 & 0 & 1 & 0 & 0 & 1 & 1 & 1 \\
+0 & 0 & 0 & 1 & 1 & 1 & 1 & 0
+\end{bmatrix},
+\label{eq:hamming84_G}
+\end{equation}
+where the eighth column (index 7) ensures each codeword has even Hamming weight.
+
+The extended parity-check matrix $\bar{H} \in \mathbb{F}_2^{4 \times 8}$ is constructed by bordering the original matrix $H$:
+\begin{equation}
+\bar{H} =
+\begin{bmatrix}
+1 & 1 & 0 & 1 & 1 & 0 & 0 & 0 \\
+1 & 0 & 1 & 1 & 0 & 1 & 0 & 0 \\
+0 & 1 & 1 & 1 & 0 & 0 & 1 & 0 \\
+1 & 1 & 1 & 1 & 1 & 1 & 1 & 1
+\end{bmatrix}.
+\label{eq:hamming84_H}
+\end{equation}
+Rows 0--2 compute the local Hamming syndrome; Row 3 computes the overall parity check. This construction satisfies the orthogonality condition $\bar{G}\bar{H}^\top = \mathbf{0}$.
+
+\subsubsection{SECDED Decoding Logic}
+
+For a received vector $\mathbf{r} \in \mathbb{F}_2^8$ (indexed $0 \dots 7$), two distinct signals are computed:
+\begin{align}
+\mathbf{z} &= H_{7,4} \cdot \mathbf{r}_{[0:6]}^\top \in \mathbb{F}_2^3
+    && \text{(Local Syndrome)} \\
+p &= \bigoplus_{i=0}^{7} r_i \in \mathbb{F}_2
+    && \text{(Overall Parity)}
+\end{align}
+
+The pair $(\mathbf{z}, p)$ distinguishes four error cases:
+
+\begin{center}
+\resizebox{\columnwidth}{!}{%
+\begin{tabular}{c c l l}
+\toprule
+\textbf{Syndrome $\mathbf{z}$} & \textbf{Parity $p$} & \textbf{Diagnosis} & \textbf{Action} \\
+\midrule
+$\mathbf{0}$ & 0 & No Error & Accept \\
+$\neq \mathbf{0}$ & 1 & Single Error ($w=1$) & Correct via LUT \\
+$\neq \mathbf{0}$ & 0 & Double Error ($w=2$) & Flag Erasure \\
+$\mathbf{0}$ & 1 & Parity Bit Error ($w=1$) & Ignore (Data valid) \\
+\bottomrule
+\end{tabular}%
+}
+\end{center}
+
+The key insight is that single-bit errors flip both the syndrome and the parity, while double-bit errors flip the syndrome but preserve parity (since $1 \oplus 1 = 0$).
+
+When a double-bit error is detected, the decoder cannot uniquely identify which two bits are corrupted. Rather than miscorrecting (as Hamming(7,4) would), the decoder declares an erasure---the value is flagged as invalid.
+
+\subsection{Manifold-Aware Interpolation for Erasure Recovery}
+
+SECDED detection prevents corruption but creates missing data. Setting an erased entry to zero introduces systematic bias. Instead, the geometric structure of the KV cache sequence is exploited. The sequence of cached values $\{v_t\}_{t=1}^{T}$ is modeled as discrete samples from a smooth trajectory in $\mathbb{R}^{d}$.
+
+\subsubsection{Smoothness Assumption}
+\label{ass:smoothness}
+The cache sequence is assumed to have bounded local variation. Consecutive entries satisfy:
+\begin{equation}
+\| v_t - v_{t-1} \|_2 \leq L \| v_{t-1} \|_2
+\end{equation}
+for some Lipschitz constant $L < 1$. This implies that neighboring values provide strong mutual information. Empirically, for both GPT-2 and LLaMA, the median relative change between consecutive keys is observed to be $<10\%$ (Section~\ref{sec:experiments}).
+
+\subsubsection{Linear Interpolation Recovery}
+
+When position $t$ is flagged as an erasure, $\hat{v}_t$ is estimated by minimizing the local curvature (second-order difference) of the reconstructed trajectory:
+\begin{equation}
+\hat{v}_t = \arg\min_{\mathbf{x}} \| (v_{t+1} - \mathbf{x}) - (\mathbf{x} - v_{t-1}) \|_2^2.
+\end{equation}
+
+Expanding the objective function $f(\mathbf{x})$:
+\begin{equation}
+f(\mathbf{x}) = \| (v_{t+1} + v_{t-1}) - 2\mathbf{x} \|_2^2.
+\end{equation}
+
+Taking the gradient with respect to $\mathbf{x}$ and solving $\nabla_\mathbf{x} f = \mathbf{0}$:
+\begin{equation}
+-4(v_{t+1} + v_{t-1} - 2\mathbf{x}) = \mathbf{0}
+\quad \Rightarrow \quad
+\hat{v}_t = \frac{1}{2}(v_{t-1} + v_{t+1}).
+\end{equation}
+
+The optimal estimate is the geometric midpoint of the neighbors. This approach:
+\begin{itemize}
+    \item Preserves the scale of the sequence (unbiased).
+    \item Requires only $\mathcal{O}(d)$ arithmetic operations.
+    \item Is readily parallelizable within the attention kernel.
+\end{itemize}
+
+\subsubsection{Boundary Handling}
+At sequence boundaries where a neighbor is undefined:
+\begin{itemize}
+    \item Left boundary ($t=0$): $\hat{v}_0 = v_1$ (Clamp to right neighbor).
+    \item Right boundary ($t=T$): $\hat{v}_T = v_{T-1}$ (Clamp to left neighbor).
+\end{itemize}
+
+\begin{table}[t]
+\centering
+\small
+\begin{tabular}{lccc}
+\toprule
+\textbf{Strategy} & \textbf{Bias} & \textbf{Variance} & \textbf{Cost} \\
+\midrule
+Zero replacement & High (toward 0) & Low & $\mathcal{O}(1)$ \\
+Random noise & None & High & $\mathcal{O}(1)$ \\
+Keep corrupted & None & Extreme & $\mathcal{O}(1)$ \\
+Interpolation & Low & Low & $\mathcal{O}(d)$ \\
+\bottomrule
+\end{tabular}
+\caption{Erasure Handling Strategies. Linear interpolation minimizes both bias and variance by leveraging local smoothness, unlike naive zeroing or ignoring the error.}
+\label{tab:erasure_strategies}
+\end{table}
+
+\subsection{The Extended Binary Golay(24,12) Subspace}
+
+While Hamming codes provide efficient single-error correction, applications requiring stronger protection motivate codes with larger correction radius. The extended binary Golay code $\mathcal{G}_{24}$ is an $[n,k,d_{\min}] = [24,12,8]$ linear code---the unique perfect 3-error-correcting binary code of practical size.
+
+\subsubsection{Direct Sum Construction for INT4 Triplets}
+
+Unlike Hamming codes that encode a single INT4 value, Golay's 12-bit data capacity encodes three INT4 values as a triplet:
+\begin{equation}
+\mathbf{d} = [v_0 \mid v_1 \mid v_2] \in \mathbb{F}_2^{12},
+\end{equation}
+where each $v_i \in \{0,1\}^4$ represents a 4-bit quantized cache value. This amortizes the 100\% overhead (12 parity bits for 12 data bits) across three values, yielding an effective per-value overhead of 100\%.
+
+\subsubsection{Algebraic Construction via Quadratic Residues}
+
+The Golay code derives from the Paley construction using quadratic residues modulo 11. Define the quadratic residue set:
+\[
+\mathcal{Q}_{11} = \{x^2 \bmod 11 : x \in \{1,\ldots,10\}\} = \{1, 3, 4, 5, 9\}.
+\]
+The $12 \times 12$ matrix $\mathbf{B}$ is constructed with circulant structure based on these residues. The first row encodes membership in $\mathcal{Q}_{11}$, with subsequent rows formed by cyclic shifts, plus a final row to ensure the self-dual property:
+\begin{footnotesize}
+\begin{equation}
+\setlength{\arraycolsep}{2.5pt}
+\setcounter{MaxMatrixCols}{12}
+\mathbf{B} =
+\begin{bmatrix}
+1 & 1 & 0 & 1 & 1 & 1 & 0 & 0 & 0 & 1 & 0 & 1 \\
+1 & 0 & 1 & 1 & 1 & 0 & 0 & 0 & 1 & 0 & 1 & 1 \\
+0 & 1 & 1 & 1 & 0 & 0 & 0 & 1 & 0 & 1 & 1 & 1 \\
+1 & 1 & 1 & 0 & 0 & 0 & 1 & 0 & 1 & 1 & 0 & 1 \\
+1 & 1 & 0 & 0 & 0 & 1 & 0 & 1 & 1 & 0 & 1 & 1 \\
+1 & 0 & 0 & 0 & 1 & 0 & 1 & 1 & 0 & 1 & 1 & 1 \\
+0 & 0 & 0 & 1 & 0 & 1 & 1 & 0 & 1 & 1 & 1 & 1 \\
+0 & 0 & 1 & 0 & 1 & 1 & 0 & 1 & 1 & 1 & 0 & 1 \\
+0 & 1 & 0 & 1 & 1 & 0 & 1 & 1 & 1 & 0 & 0 & 1 \\
+1 & 0 & 1 & 1 & 0 & 1 & 1 & 1 & 0 & 0 & 0 & 1 \\
+0 & 1 & 1 & 0 & 1 & 1 & 1 & 0 & 0 & 0 & 1 & 1 \\
+1 & 1 & 1 & 1 & 1 & 1 & 1 & 1 & 1 & 1 & 1 & 0
+\end{bmatrix}.
+\end{equation}
+\end{footnotesize}
+
+\subsubsection{Self-Orthogonality and Code Structure}
+
+The matrix $\mathbf{B}$ satisfies the remarkable self-dual property:
+\begin{equation}
+\mathbf{B}\mathbf{B}^\top \equiv \mathbf{I}_{12} \pmod{2}.
+\end{equation}
+This self-orthogonality ensures that the code is its own dual, enabling the systematic construction:
+\begin{align}
+G_{24} &= [\mathbf{I}_{12} \mid \mathbf{B}] \in \mathbb{F}_2^{12 \times 24}, \\
+H_{24} &= [\mathbf{B}^\top \mid \mathbf{I}_{12}] \in \mathbb{F}_2^{12 \times 24}.
+\end{align}
+
+The duality $G_{24}H_{24}^\top = \mathbf{0}$ follows from:
+\begin{equation}
+[\mathbf{I}_{12} \mid \mathbf{B}]
+\begin{bmatrix} \mathbf{B} \\ \mathbf{I}_{12} \end{bmatrix}
+= \mathbf{B} + \mathbf{B} = \mathbf{0} \pmod{2}.
+\end{equation}
+
+\subsubsection{Combinatorial Properties and Minimum Distance}
+
+The Golay code achieves minimum distance $d_{\min} = 8$, providing:
+\begin{itemize}
+    \item Error correction: $t = \lfloor (d_{\min}-1)/2 \rfloor = 3$ bit errors
+    \item Error detection: Up to $d_{\min}-1 = 7$ bit errors
+    \item Covering radius: Exactly 3 (every syndrome has a unique coset leader of weight $\leq 3$)
+\end{itemize}
+
+The weight distribution of nonzero codewords forms a Steiner system $S(5,8,24)$: the 759 minimum-weight codewords (weight 8) partition the 24 coordinates into 8-element blocks such that every 5-element subset appears in exactly one block. This combinatorial structure underlies the code's optimality.
+
+\subsubsection{Syndrome Decoding via Precomputed Tables}
+
+Decoding employs a precomputed syndrome table of size $2^{12} = 4096$ entries. For received word $\mathbf{r} = \mathbf{c} + \mathbf{e}$, the 12-bit syndrome identifies the error pattern:
+\begin{equation}
+\mathbf{z} = H_{24}\mathbf{r}^\top = H_{24}\mathbf{e}^\top \in \mathbb{F}_2^{12}.
+\end{equation}
+
+The table maps each syndrome to its unique correctable error pattern. The total number of correctable patterns is:
+\begin{equation}
+1 + \binom{24}{1} + \binom{24}{2} + \binom{24}{3} = 1 + 24 + 276 + 2024 = 2325.
+\end{equation}
+
+Since Golay is a perfect code, these 2325 patterns produce exactly 2325 distinct syndromes, leaving $4096 - 2325 = 1771$ syndromes that indicate uncorrectable errors ($\geq 4$ bit flips). In the implementation, uncorrectable codewords return corrupted data with a flag, enabling downstream handling (e.g., discarding the value or using neighboring interpolation).
+
+\subsubsection{Comparison with Hamming Codes}
+
+Table~\ref{tab:code_comparison} summarizes the trade-offs between the ECC options.
+
+\begin{table}[h]
+\centering
+\caption{ECC code comparison for INT4 KV cache protection.}
+\label{tab:code_comparison}
+\resizebox{\columnwidth}{!}{%
+\begin{tabular}{lccc}
+\toprule
+Property & Hamming(7,4) & Hamming(8,4) & Golay(24,12) \\
+\midrule
+Codeword length $n$ & 7 & 8 & 24 \\
+Data bits $k$ & 4 & 4 & 12 \\
+Minimum distance $d_{\min}$ & 3 & 4 & 8 \\
+Correction capability & 1 bit & 1 bit & 3 bits \\
+Detection capability & 1 bit & 2 bits & 7 bits \\
+Storage overhead & 75\% & 100\% & 100\% \\
+Syndrome table size & 8 & 8 & 4096 \\
+Values per codeword & 1 & 1 & 3 \\
+\bottomrule
+\end{tabular}%
+}
+\end{table}
+
+Golay's 3-error correction provides substantially stronger protection than Hamming at the cost of larger syndrome tables and increased decoding complexity. At high BER ($p = 10^{-2}$), where multi-bit errors within a codeword become likely, Golay maintains near-baseline perplexity while Hamming codes degrade measurably.
+
+\subsubsection{Decoding Complexity}
+
+Unlike Hamming's $O(1)$ syndrome lookup in an 8-entry table, Golay requires a 4096-entry table lookup. However, this remains $O(1)$ per codeword---the table is precomputed at initialization and cached in GPU memory (16 KB for int32 entries). The dominant cost at inference time is the syndrome computation (12 parity checks over 24 bits), which the Triton implementation parallelizes efficiently across 256 elements per thread block.
+
+\section{Empirical Evaluation}
+\label{sec:experiments}
+
+  We evaluate our ECC protection schemes on two transformer architectures: GPT-2 (124M
+  parameters) and LLaMA-3.1-8B. Experiments use WikiText-2 test set with sliding window
+  evaluation (max length 256, stride 128). Each configuration is evaluated across 3 random
+  seeds with Monte Carlo fault injection at bit error rates (BER) $p \in \{0, 10^{-4},
+  10^{-3}, 10^{-2}\}$.
+
+  \subsection{Evaluation Metrics}
+
+  \begin{definition}[Perplexity]
+  Given a token sequence $X = (x_1, \dots, x_T)$, the \textbf{Perplexity} (PPL) is defined
+  as the exponential of the cross-entropy loss averaged over the sequence:
+  \[
+  \text{PPL}(X) = \exp\left( -\frac{1}{T} \sum_{t=1}^{T} \ln P_{\theta}(x_t \mid x_{<t}) \right).
+  \]
+  \end{definition}
+
+  Lower perplexity indicates better predictive performance. We additionally report
+  \textbf{KL divergence} from clean outputs (measuring distribution shift) and
+  \textbf{Top-5 accuracy} (fraction of positions where the true token appears in the
+  model's top 5 predictions).
+
+  \subsection{LLaMA-3.1-8B Results}
+
+  Table~\ref{tab:llama_ppl} reports perplexity for LLaMA-3.1-8B under increasing bit-flip
+  probability. The FP16 oracle baseline (no quantization, no bit flips) achieves PPL = 1.42.
+  All INT4-quantized modes incur a small deterministic penalty from discretization,
+  yielding PPL = 1.44 at $p=0$.
+
+  \begin{table}[h]
+      \centering
+      \caption{\textbf{LLaMA-3.1-8B Perplexity} under increasing BER. Values show
+      mean $\pm$ 95\% CI across 3 seeds.}
+      \label{tab:llama_ppl}
+      \resizebox{\columnwidth}{!}{%
+      \begin{tabular}{lcccc}
+          \toprule
+          \textbf{Protection Mode} & \textbf{$p=0$} & \textbf{$p=10^{-4}$} &
+          \textbf{$p=10^{-3}$} & \textbf{$p=10^{-2}$} \\
+          \midrule
+          FP16 (Oracle)             & 1.42 & 1.42 & 1.42 & 1.42 \\
+          \midrule
+          Hamming(7,4)              & 1.44 & 1.44 & 1.44 & 1.51$\pm$0.05 \\
+          Hamming(8,4)              & 1.44 & 1.44 & 1.44 & 1.50$\pm$0.02 \\
+          \textbf{H(8,4)+Interp}    & \textbf{1.44} & \textbf{1.44} & \textbf{1.44} &
+          \textbf{1.44$\pm$0.02} \\
+          \textbf{Golay(24,12)}     & \textbf{1.44} & \textbf{1.44} & \textbf{1.44} &
+          \textbf{1.44$\pm$0.01} \\
+          \bottomrule
+      \end{tabular}%
+      }
+  \end{table}
+
+  At the critical regime $p=10^{-2}$, where approximately 1\% of stored bits are corrupted,
+  both Hamming codes without interpolation show measurable degradation (PPL increases to
+  1.50--1.51). In contrast, Hamming(8,4) with interpolation and Golay(24,12) maintain
+  baseline perplexity (1.44), demonstrating effective protection against high error rates.
+
+  \subsection{GPT-2 Results}
+
+  Table~\ref{tab:gpt2_ppl} shows analogous results for GPT-2. The smaller model exhibits
+  similar patterns: Golay and H(8,4)+Interpolation maintain near-baseline performance
+  even at $p=10^{-2}$.
+
+  \begin{table}[h]
+      \centering
+      \caption{\textbf{GPT-2 Perplexity} under increasing BER.}
+      \label{tab:gpt2_ppl}
+      \resizebox{\columnwidth}{!}{%
+      \begin{tabular}{lcccc}
+          \toprule
+          \textbf{Protection Mode} & \textbf{$p=0$} & \textbf{$p=10^{-4}$} &
+          \textbf{$p=10^{-3}$} & \textbf{$p=10^{-2}$} \\
+          \midrule
+          FP16 (Oracle)             & 1.78 & 1.78 & 1.78 & 1.78 \\
+          \midrule
+          Hamming(7,4)              & 1.77 & 1.77 & 1.78 & 1.86$\pm$0.03 \\
+          Hamming(8,4)              & 1.77 & 1.77 & 1.77$\pm$0.02 & 1.92$\pm$0.18 \\
+          \textbf{H(8,4)+Interp}    & \textbf{1.77} & \textbf{1.77} & \textbf{1.78} &
+          \textbf{1.77$\pm$0.03} \\
+          \textbf{Golay(24,12)}     & \textbf{1.77} & \textbf{1.77} & \textbf{1.77} &
+          \textbf{1.77$\pm$0.02} \\
+          \bottomrule
+      \end{tabular}%
+      }
+  \end{table}
+
+  \subsection{Analysis of Algebraic Failures}
+
+  A notable finding is that Hamming(8,4) without interpolation performs \emph{worse} than
+  Hamming(7,4) at $p=10^{-2}$ (GPT-2: 1.92 vs.\ 1.86), despite having strictly stronger
+  detection guarantees. This counterintuitive result is explained by examining how each
+  scheme handles multi-bit errors.
+
+  Tables~\ref{tab:errors_corrected} and \ref{tab:errors_detected} report the error
+  correction statistics for LLaMA-3.1-8B.
+
+  \begin{table}[h]
+      \centering
+      \caption{\textbf{Single-Bit Errors Corrected} (LLaMA-3.1-8B). Number of codewords
+      successfully corrected via syndrome decoding.}
+      \label{tab:errors_corrected}
+      \resizebox{\columnwidth}{!}{%
+      \begin{tabular}{lrrrr}
+          \toprule
+          \textbf{Protection} & \textbf{$p=0$} & \textbf{$p=10^{-4}$} &
+          \textbf{$p=10^{-3}$} & \textbf{$p=10^{-2}$} \\
+          \midrule
+          Hamming(7,4)        & 0 & 57{,}848  & 577{,}332 & 5{,}606{,}766 \\
+          Hamming(8,4)        & 0 & 58{,}154  & 575{,}589 & 5{,}394{,}530 \\
+          Golay(24,12)        & 0 & 66{,}266  & 665{,}996 & 6{,}642{,}140 \\
+          \bottomrule
+      \end{tabular}%
+      }
+  \end{table}
+
+  \begin{table}[h]
+      \centering
+      \caption{\textbf{Multi-Bit Errors Detected} (LLaMA-3.1-8B). Number of codewords
+      flagged as uncorrectable (SECDED detection or Golay $>$3-bit events).}
+      \label{tab:errors_detected}
+      \resizebox{\columnwidth}{!}{%
+      \begin{tabular}{lrrrr}
+          \toprule
+          \textbf{Protection} & \textbf{$p=0$} & \textbf{$p=10^{-4}$} &
+          \textbf{$p=10^{-3}$} & \textbf{$p=10^{-2}$} \\
+          \midrule
+          Hamming(7,4)        & 0 & 0 & 0 & 0 \\
+          Hamming(8,4)        & 0 & 47 & 2{,}340 & 218{,}139 \\
+          Golay(24,12)        & 0 & 0 & 0 & 2{,}523 \\
+          \bottomrule
+      \end{tabular}%
+      }
+  \end{table}
+
+  \subsubsection{The Miscorrection vs.\ Erasure Trade-off}
+
+  At $p=10^{-2}$, Hamming(8,4) detects approximately 218{,}000 double-bit errors that it
+  cannot correct. Without interpolation, these detected errors leave the corrupted data
+  in place, producing large spurious attention scores. The cumulative effect of
+  hundreds of thousands of such events degrades model quality.
+
+  In contrast, Hamming(7,4) has no detection capability for double-bit errors. When two
+  bits flip within a codeword, the decoder \emph{miscorrects} to an incorrect but
+  typically nearby codeword. While algebraically wrong, miscorrection often produces a
+  value closer to the original than leaving corrupted data unchanged, explaining its
+  relatively better performance.
+
+  This analysis motivates the interpolation strategy: when Hamming(8,4) detects an
+  uncorrectable error, rather than preserving corrupted data, we reconstruct the value
+  using temporal neighbors.
+
+  \subsection{Validation of the Smoothness Hypothesis}
+
+  The interpolation strategy tests our smoothness assumption: if cached state vectors
+  vary smoothly across time, detected erasures can be approximated using neighboring
+  vectors. Table~\ref{tab:kl_divergence} reports KL divergence from clean outputs,
+  measuring distribution shift.
+
+  \begin{table}[h]
+      \centering
+      \caption{\textbf{KL Divergence from Clean Outputs} (nats, LLaMA-3.1-8B).
+      Lower values indicate outputs closer to the uncorrupted baseline.}
+      \label{tab:kl_divergence}
+      \resizebox{\columnwidth}{!}{%
+      \begin{tabular}{lcccc}
+          \toprule
+          \textbf{Protection} & \textbf{$p=0$} & \textbf{$p=10^{-4}$} &
+          \textbf{$p=10^{-3}$} & \textbf{$p=10^{-2}$} \\
+          \midrule
+          FP16 (Oracle)       & 0.000 & 0.000 & 0.000 & 0.000 \\
+          \midrule
+          Hamming(7,4)        & 0.013 & 0.013 & 0.014 & 0.073$\pm$0.002 \\
+          Hamming(8,4)        & 0.013 & 0.013 & 0.013 & 0.060$\pm$0.022 \\
+          \textbf{H(8,4)+Interp} & \textbf{0.013} & \textbf{0.013} & \textbf{0.014} &
+          \textbf{0.019$\pm$0.004} \\
+          \textbf{Golay(24,12)} & \textbf{0.013} & \textbf{0.013} & \textbf{0.013} &
+          \textbf{0.014$\pm$0.001} \\
+          \bottomrule
+      \end{tabular}%
+      }
+  \end{table}
+
+  At $p=10^{-2}$, Hamming(7,4) and Hamming(8,4) without interpolation show substantial
+  distribution shift (KL = 0.060--0.073). With interpolation enabled, KL divergence
+  drops to 0.019, a 3$\times$ reduction. Golay achieves the lowest KL divergence (0.014),
+  nearly matching the quantization-only baseline. This confirms that the KV cache
+  exhibits sufficient temporal smoothness to support effective interpolation-based
+  recovery.
+
+  \subsection{Top-5 Prediction Accuracy}
+
+  Table~\ref{tab:top5} reports the fraction of positions where the correct next token
+  appears in the model's top-5 predictions, measuring prediction confidence under
+  corruption.
+
+  \begin{table}[h]
+      \centering
+      \caption{\textbf{Top-5 Accuracy} (LLaMA-3.1-8B). Higher is better.}
+      \label{tab:top5}
+      \resizebox{\columnwidth}{!}{%
+      \begin{tabular}{lcccc}
+          \toprule
+          \textbf{Protection} & \textbf{$p=0$} & \textbf{$p=10^{-4}$} &
+          \textbf{$p=10^{-3}$} & \textbf{$p=10^{-2}$} \\
+          \midrule
+          FP16 (Oracle)       & 98.2\% & 98.2\% & 98.2\% & 98.2\% \\
+          \midrule
+          Hamming(7,4)        & 98.2\% & 98.2\% & 98.1\% & 97.1$\pm$0.2\% \\
+          Hamming(8,4)        & 98.2\% & 98.2\% & 98.1\% & 97.2$\pm$0.5\% \\
+          H(8,4)+Interp       & 98.2\% & 98.2\% & 98.2\% & 97.8$\pm$0.2\% \\
+          Golay(24,12)        & 98.2\% & 98.2\% & 98.2\% & 98.1$\pm$0.2\% \\
+          \bottomrule
+      \end{tabular}%
+      }
+  \end{table}
+
+  All protection modes maintain high top-5 accuracy, with Golay showing the smallest
+  degradation at high BER (98.1\% vs.\ 98.2\% baseline).
+
+  \subsection{Summary and Discussion}
+
+  Table~\ref{tab:summary} summarizes performance at the critical regime $p=10^{-2}$
+  for LLaMA-3.1-8B.
+
+  \begin{table}[h]
+      \centering
+      \caption{\textbf{Performance Summary at $p=10^{-2}$} (LLaMA-3.1-8B).}
+      \label{tab:summary}
+      \resizebox{\columnwidth}{!}{%
+      \begin{tabular}{lccccc}
+          \toprule
+          \textbf{Metric} & \textbf{FP16} & \textbf{Ham(7,4)} & \textbf{Ham(8,4)} &
+          \textbf{H(8,4)+Interp} & \textbf{Golay} \\
+          \midrule
+          PPL                   & 1.42 & 1.51 & 1.50 & \textbf{1.44} & \textbf{1.44} \\
+          $\Delta$PPL           & --- & +6.3\% & +5.6\% & \textbf{+1.4\%} & \textbf{+1.4\%} \\
+          KL Divergence         & 0.00 & 0.073 & 0.060 & \textbf{0.019} & \textbf{0.014} \\
+          Top-5 Accuracy        & 98.2\% & 97.1\% & 97.2\% & 97.8\% & \textbf{98.1\%} \\
+          Errors Corrected      & --- & 5.6M & 5.4M & 5.4M & 6.6M \\
+          Errors Detected       & --- & 0 & 218K & 218K & 2.5K \\
+          Storage (bits/value)  & 16 & 7 & 8 & 8 & 8 \\
+          \bottomrule
+      \end{tabular}%
+      }
+  \end{table}
+
+\section{Limitations and Future Work}
+\label{sec:limitations}
+
+  \subsection{Limitations}
+
+  \paragraph{Prototype Implementation in Triton.}
+  Our ECC kernels are implemented in Triton~\cite{tillet2019triton}, a Python-based DSL
+  for GPU programming that provides portable performance across GPU architectures. While
+  Triton enables rapid prototyping and achieves reasonable throughput, it does not match
+  the performance of hand-optimized CUDA C++ implementations. Production inference systems
+  such as vLLM~\cite{kwon2023vllm}, TensorRT-LLM, and SGLang use highly optimized CUDA
+  kernels (typically distributed as \texttt{.cu}/\texttt{.cuh} files) that exploit
+  architecture-specific features including warp-level primitives, shared memory tiling,
+  and asynchronous memory operations. Our Triton implementation serves as a proof of
+  concept demonstrating the feasibility and effectiveness of ECC protection, but
+  production deployment would require reimplementation in CUDA C++ to minimize latency
+  overhead.
+
+  \paragraph{No Integration with FlashAttention.}
+  FlashAttention~\cite{dao2022flashattention,dao2023flashattention2} has become the
+  de facto standard for memory-efficient attention computation, achieving significant
+  speedups through IO-aware tiling and avoiding materialization of the full attention
+  matrix. Our current implementation uses a reference attention kernel that does not
+  incorporate FlashAttention's optimizations. Integrating ECC encode/decode operations
+  into FlashAttention's fused kernel structure presents non-trivial engineering
+  challenges: the tiled computation pattern requires careful placement of syndrome
+  computation to avoid redundant memory accesses, and the online softmax algorithm
+  must be adapted to handle detected errors within tiles. A production-ready solution
+  would require modifying FlashAttention's CUDA kernels to incorporate ECC operations
+  at appropriate synchronization points.
+
+  \paragraph{No Integration with PagedAttention.}
+  vLLM's PagedAttention~\cite{kwon2023vllm} manages KV cache memory using virtual memory
+  concepts, enabling efficient batching of requests with different sequence lengths
+  through non-contiguous block allocation. Our block-based ECC storage is conceptually
+  compatible with PagedAttention's paging mechanism, but our prototype does not integrate
+  with vLLM's memory manager or batch scheduler. Production integration would require
+  modifications to vLLM's \texttt{CacheEngine} and \texttt{BlockManager} classes to
+  allocate ECC-encoded blocks and handle the modified memory layout. Additionally,
+  PagedAttention's copy-on-write semantics for beam search and parallel sampling would
+  need to account for ECC metadata.
+
+  \paragraph{Binary Symmetric Channel Model.}
+  Our fault injection assumes a Binary Symmetric Channel (BSC) where each bit flips
+  independently with probability $p$. While this model is standard in coding theory and
+  provides a useful abstraction, real memory errors may exhibit spatial or temporal
+  correlation (e.g., multi-bit upsets from single particle strikes, row-hammer effects,
+  or wear-out patterns in specific memory regions). Our evaluation does not capture
+  these correlated failure modes, which could affect the relative performance of
+  different ECC schemes.
+
+  \paragraph{Limited Model and Dataset Scope.}
+  Our evaluation covers two model scales (GPT-2 at 124M parameters and LLaMA-3.1-8B)
+  on a single benchmark (WikiText-2). While these experiments demonstrate the
+  effectiveness of our approach, broader validation across diverse model families
+  (e.g., encoder-decoder architectures, mixture-of-experts models), larger scales
+  (70B+ parameters), and varied tasks (summarization, code generation, long-context
+  retrieval) would strengthen the generality claims.
+
+  \paragraph{Synthetic Error Injection.}
+  All experiments use software-based fault injection rather than hardware-induced
+  errors. While our Monte Carlo approach provides statistical rigor, it does not
+  capture potential interactions between memory errors and other system-level effects
+  such as ECC corrections in DRAM, GPU memory controller behavior, or thermal
+  variation. Hardware-in-the-loop validation using techniques such as beam injection
+  or voltage manipulation would provide stronger evidence of real-world applicability.
+
+  \subsection{Future Work}
+
+  \paragraph{CUDA C++ Implementation.}
+  A natural next step is reimplementing our ECC kernels in CUDA C++ for integration
+  with production inference frameworks. Key optimizations would include:
+  \begin{itemize}
+      \item Warp-level syndrome computation using \texttt{\_\_ballot\_sync} for
+            parallel parity calculation
+      \item Shared memory caching of syndrome lookup tables to reduce global memory
+            traffic
+      \item Vectorized loads/stores (\texttt{float4}, \texttt{int4}) for coalesced
+            memory access
+      \item Kernel fusion to amortize launch overhead across encode, attention, and
+            decode phases
+  \end{itemize}
+  We estimate that a well-optimized CUDA implementation could reduce the ECC overhead
+  from our current Triton baseline by 2--3$\times$.
+
+  \paragraph{FlashAttention Integration.}
+  Integrating ECC protection into FlashAttention requires inserting decode operations
+  before K/V tile loads and encode operations after KV cache updates. The key challenge
+  is maintaining FlashAttention's memory efficiency: ECC operations should occur within
+  the existing tiling structure without requiring additional global memory
+  round-trips. One approach is to decode ECC codewords into shared memory during the
+  K/V load phase, perform attention computation on decoded values, and re-encode only
+  for newly generated tokens. This would add approximately $O(B \cdot d)$ shared memory
+  overhead per tile for storing decoded values, where $B$ is the tile size and $d$ is
+  the head dimension.
+
+  \paragraph{vLLM and SGLang Integration.}
+  Production deployment requires integration with serving frameworks. For vLLM, this
+  involves:
+  \begin{itemize}
+      \item Modifying \texttt{CacheEngine} to allocate ECC-encoded cache blocks
+      \item Extending \texttt{BlockManager} to track ECC metadata and error statistics
+      \item Adapting the PagedAttention CUDA kernel to perform inline ECC operations
+      \item Exposing ECC configuration through the API for per-request or per-model
+            settings
+  \end{itemize}
+  Similar modifications would enable integration with SGLang's RadixAttention and
+  other emerging inference frameworks.
+
+  \paragraph{Adaptive ECC Selection.}
+  Our current approach uses a fixed ECC scheme throughout inference. An adaptive
+  strategy could select protection strength based on runtime conditions:
+  \begin{itemize}
+      \item \textbf{Layer-wise adaptation}: Earlier layers may tolerate more errors
+            than later layers due to the compositional nature of transformer computation
+      \item \textbf{Error rate monitoring}: If detected error rates exceed a threshold,
+            dynamically switch from Hamming to Golay protection
+      \item \textbf{Criticality-aware protection}: Protect attention heads with higher
+            gradient magnitudes more strongly, using techniques from neural network
+            pruning literature
+  \end{itemize}
+
+  \paragraph{Hardware Validation.}
+  Validating our approach on actual hardware with induced memory errors would
+  strengthen the practical relevance. Possible approaches include:
+  \begin{itemize}
+      \item Neutron beam testing at facilities such as LANSCE or TRIUMF
+      \item Controlled voltage reduction to increase soft error rates
+      \item Row-hammer attacks to induce targeted bit flips
+      \item Collaboration with memory manufacturers to access devices with disabled
+            internal ECC
+  \end{itemize}
+
+  \paragraph{Extended Quantization Support.}
+  Our current implementation focuses on INT4 quantization. Extending to other formats
+  would broaden applicability:
+  \begin{itemize}
+      \item \textbf{FP8 (E4M3/E5M2)}: The 8-bit format used in modern inference
+            accelerators; ECC could protect the exponent bits more strongly than
+            mantissa bits based on sensitivity analysis
+      \item \textbf{Mixed-precision}: Protect keys and values at different precision
+            levels, as prior work suggests values may be more sensitive to quantization
+      \item \textbf{Sub-4-bit quantization}: Emerging INT3 and INT2 schemes could
+            benefit even more from ECC protection due to reduced representation capacity
+  \end{itemize}
+
+  \paragraph{Long-Context and Multi-GPU Scaling.}
+  As context windows extend to millions of tokens, KV cache memory becomes increasingly
+  critical. Future work should evaluate ECC overhead at extreme sequence lengths and
+  investigate:
+  \begin{itemize}
+      \item Distributed KV cache across multiple GPUs with per-device ECC
+      \item Hierarchical protection with stronger codes for offloaded (CPU/SSD) cache
+      \item Streaming decoding with incremental ECC updates
+  \end{itemize}
+
+  \paragraph{Theoretical Analysis of Error Propagation.}
+  While our empirical results demonstrate robustness, a theoretical analysis of how
+  bit errors in KV cache propagate through attention layers would provide deeper
+  understanding. Questions include:
+  \begin{itemize}
+      \item What is the expected perturbation in output logits as a function of BER
+            and sequence length?
+      \item Are certain attention patterns (e.g., local vs.\ global attention) more
+            robust to cache corruption?
+      \item Can we derive bounds on perplexity degradation under specific error models?
+  \end{itemize}
+  Such analysis could inform principled ECC selection criteria and enable
+  error-aware model design.
+
+
+
+
+
+\bibliography{references}
+\bibliographystyle{plain}
+
+\end{document}

@@ -40,11 +40,19 @@ from .golay_triton import (
 from .fault_injection_triton import (
     inject_bit_errors_triton,
     inject_bit_errors_triton_batched,
+    inject_bit_errors_triton_vectorized,
 )
 
 from .interpolation_triton import (
     interpolate_double_errors,
     interpolate_double_errors_1d,
+    interpolate_double_errors_autotuned,
+)
+
+from .fused_kernels import (
+    fused_quantize_encode_hamming84,
+    fused_quantize_encode_hamming74,
+    fused_decode_dequantize_hamming84,
 )
 
 __all__ = [
@@ -80,6 +88,12 @@ __all__ = [
     "golay_decode",
     "inject_bit_errors_triton",
     "inject_bit_errors_triton_batched",
+    "inject_bit_errors_triton_vectorized",
     "interpolate_double_errors",
     "interpolate_double_errors_1d",
+    "interpolate_double_errors_autotuned",
+    # Fused kernels
+    "fused_quantize_encode_hamming84",
+    "fused_quantize_encode_hamming74",
+    "fused_decode_dequantize_hamming84",
 ]

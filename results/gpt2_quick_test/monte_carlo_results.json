@@ -1,0 +1,153 @@
+{
+  "config": {
+    "model_name": "gpt2",
+    "cache_modes": [
+      "int4",
+      "int4-hamming84",
+      "int4-hamming84-interp"
+    ],
+    "ber_levels": [
+      0.0,
+      0.001,
+      0.01
+    ],
+    "seeds": [
+      42
+    ],
+    "max_samples": 10,
+    "max_length": 256,
+    "stride": 128,
+    "device": "auto",
+    "output_dir": "results/gpt2_quick_test",
+    "backend": "triton",
+    "compute_kl_divergence": false,
+    "compute_top5": false,
+    "compute_catastrophic": true,
+    "catastrophic_threshold": 1000.0
+  },
+  "results": {
+    "int4": {
+      "0.0": {
+        "ppl_mean": 1.773889183998108,
+        "ppl_std": 0.0,
+        "kl_divergence_mean": 0.0,
+        "kl_divergence_std": 0.0,
+        "top5_accuracy_mean": 1.0,
+        "top5_accuracy_std": 0.0,
+        "catastrophic_rate_mean": 0.0,
+        "catastrophic_rate_std": 0.0,
+        "errors_corrected_mean": 0.0,
+        "errors_detected_mean": 0.0,
+        "n_trials": 1
+      },
+      "0.001": {
+        "ppl_mean": 1.8563470840454102,
+        "ppl_std": 0.0,
+        "kl_divergence_mean": 0.0,
+        "kl_divergence_std": 0.0,
+        "top5_accuracy_mean": 1.0,
+        "top5_accuracy_std": 0.0,
+        "catastrophic_rate_mean": 0.0,
+        "catastrophic_rate_std": 0.0,
+        "errors_corrected_mean": 0.0,
+        "errors_detected_mean": 0.0,
+        "n_trials": 1
+      },
+      "0.01": {
+        "ppl_mean": 9.422189712524414,
+        "ppl_std": 0.0,
+        "kl_divergence_mean": 0.0,
+        "kl_divergence_std": 0.0,
+        "top5_accuracy_mean": 1.0,
+        "top5_accuracy_std": 0.0,
+        "catastrophic_rate_mean": 0.0,
+        "catastrophic_rate_std": 0.0,
+        "errors_corrected_mean": 0.0,
+        "errors_detected_mean": 0.0,
+        "n_trials": 1
+      }
+    },
+    "int4-hamming84": {
+      "0.0": {
+        "ppl_mean": 1.773889183998108,
+        "ppl_std": 0.0,
+        "kl_divergence_mean": 0.0,
+        "kl_divergence_std": 0.0,
+        "top5_accuracy_mean": 1.0,
+        "top5_accuracy_std": 0.0,
+        "catastrophic_rate_mean": 0.0,
+        "catastrophic_rate_std": 0.0,
+        "errors_corrected_mean": 0.0,
+        "errors_detected_mean": 0.0,
+        "n_trials": 1
+      },
+      "0.001": {
+        "ppl_mean": 1.7697944641113281,
+        "ppl_std": 0.0,
+        "kl_divergence_mean": 0.0,
+        "kl_divergence_std": 0.0,
+        "top5_accuracy_mean": 1.0,
+        "top5_accuracy_std": 0.0,
+        "catastrophic_rate_mean": 0.0,
+        "catastrophic_rate_std": 0.0,
+        "errors_corrected_mean": 89980.0,
+        "errors_detected_mean": 376.0,
+        "n_trials": 1
+      },
+      "0.01": {
+        "ppl_mean": 2.2584023475646973,
+        "ppl_std": 0.0,
+        "kl_divergence_mean": 0.0,
+        "kl_divergence_std": 0.0,
+        "top5_accuracy_mean": 1.0,
+        "top5_accuracy_std": 0.0,
+        "catastrophic_rate_mean": 0.0,
+        "catastrophic_rate_std": 0.0,
+        "errors_corrected_mean": 840350.0,
+        "errors_detected_mean": 33969.0,
+        "n_trials": 1
+      }
+    },
+    "int4-hamming84-interp": {
+      "0.0": {
+        "ppl_mean": 1.773889183998108,
+        "ppl_std": 0.0,
+        "kl_divergence_mean": 0.0,
+        "kl_divergence_std": 0.0,
+        "top5_accuracy_mean": 1.0,
+        "top5_accuracy_std": 0.0,
+        "catastrophic_rate_mean": 0.0,
+        "catastrophic_rate_std": 0.0,
+        "errors_corrected_mean": 0.0,
+        "errors_detected_mean": 0.0,
+        "n_trials": 1
+      },
+      "0.001": {
+        "ppl_mean": 1.7730621099472046,
+        "ppl_std": 0.0,
+        "kl_divergence_mean": 0.0,
+        "kl_divergence_std": 0.0,
+        "top5_accuracy_mean": 1.0,
+        "top5_accuracy_std": 0.0,
+        "catastrophic_rate_mean": 0.0,
+        "catastrophic_rate_std": 0.0,
+        "errors_corrected_mean": 89980.0,
+        "errors_detected_mean": 376.0,
+        "n_trials": 1
+      },
+      "0.01": {
+        "ppl_mean": 1.809035062789917,
+        "ppl_std": 0.0,
+        "kl_divergence_mean": 0.0,
+        "kl_divergence_std": 0.0,
+        "top5_accuracy_mean": 1.0,
+        "top5_accuracy_std": 0.0,
+        "catastrophic_rate_mean": 0.0,
+        "catastrophic_rate_std": 0.0,
+        "errors_corrected_mean": 840350.0,
+        "errors_detected_mean": 33969.0,
+        "n_trials": 1
+      }
+    }
+  }
+}

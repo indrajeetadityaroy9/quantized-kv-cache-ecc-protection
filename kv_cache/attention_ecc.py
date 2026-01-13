@@ -153,7 +153,8 @@ def paged_attention_ecc_kernel(
     v_cache_ptr,
     block_table_ptr,
     context_lens_ptr,
-    scales_ptr,
+    k_scales_ptr,
+    v_scales_ptr,
     batch_size,
     num_heads,
     head_dim,
@@ -229,9 +230,9 @@ def paged_attention_ecc_kernel(
                 + head_idx * KV_BLOCK_SIZE
                 + slot
             )
-            scale = tl.load(scales_ptr + scale_offset, mask=token_valid, other=1.0)
+            k_scale = tl.load(k_scales_ptr + scale_offset, mask=token_valid, other=1.0)
 
-            k_float = dequantize_int4(k_int4, scale)
+            k_float = dequantize_int4(k_int4, k_scale)
 
             qk_partial = q * k_float
             qk_score = tl.sum(qk_partial, axis=0) * sm_scale
@@ -260,12 +261,204 @@ def paged_attention_ecc_kernel(
                 v_encoded, lut0, lut1, lut2, lut3, lut4, lut5, lut6, lut7
             )
 
-            v_float = dequantize_int4(v_int4, scale)
+            v_scale = tl.load(v_scales_ptr + scale_offset, mask=token_valid, other=1.0)
+            v_float = dequantize_int4(v_int4, v_scale)
 
             acc = alpha * acc + beta * v_float
 
             m_i = m_new
             l_i = l_new
+
+    output = tl.where(l_i > 0, acc / l_i, tl.zeros([BLOCK_HEAD_DIM], dtype=tl.float32))
+
+    out_offset = batch_idx * num_heads * head_dim + head_idx * head_dim
+    tl.store(output_ptr + out_offset + head_offsets, output, mask=head_mask)
+
+
+@triton.jit
+def paged_attention_ecc_tiled_kernel(
+    output_ptr,
+    query_ptr,
+    k_cache_ptr,
+    v_cache_ptr,
+    block_table_ptr,
+    context_lens_ptr,
+    k_scales_ptr,
+    v_scales_ptr,
+    batch_size,
+    num_heads,
+    head_dim,
+    num_layers,
+    layer_idx,
+    block_size,
+    max_blocks,
+    max_context_len,
+    sm_scale,
+    lut0: tl.constexpr,
+    lut1: tl.constexpr,
+    lut2: tl.constexpr,
+    lut3: tl.constexpr,
+    lut4: tl.constexpr,
+    lut5: tl.constexpr,
+    lut6: tl.constexpr,
+    lut7: tl.constexpr,
+    BLOCK_HEAD_DIM: tl.constexpr,
+    MAX_CONTEXT_BLOCKS: tl.constexpr,
+    KV_BLOCK_SIZE: tl.constexpr,
+    BLOCK_M: tl.constexpr,  # Tokens per tile (4, 8, or 16)
+):
+    """
+    Tiled paged attention kernel with ECC decoding (EXPERIMENTAL).
+
+    NOTE: Benchmarking shows this tiled kernel is SLOWER than the original
+    token-by-token kernel for ECC-protected attention. The reason is that:
+    1. ECC decoding (bit manipulation) dominates compute, not softmax rescaling
+    2. Tiling requires either storing QK scores (register pressure) or
+       re-computing K (2x memory loads)
+    3. Standard Flash Attention assumptions don't apply to ECC workloads
+
+    This kernel is kept for correctness testing and future optimization attempts,
+    but use_tiled=False (the default) is recommended for production.
+
+    Processes BLOCK_M tokens per inner iteration instead of 1, enabling:
+    - Tile-wise online softmax updates (fewer rescale operations)
+    - Potential for better memory coalescing (not realized in practice)
+    """
+    pid = tl.program_id(0)
+    batch_idx = pid // num_heads
+    head_idx = pid % num_heads
+
+    head_offsets = tl.arange(0, BLOCK_HEAD_DIM)
+    head_mask = head_offsets < head_dim
+
+    context_len = tl.load(context_lens_ptr + batch_idx)
+
+    q_offset = batch_idx * num_heads * head_dim + head_idx * head_dim
+    q = tl.load(query_ptr + q_offset + head_offsets, mask=head_mask, other=0.0)
+
+    # Online softmax accumulators
+    m_i = -1e20
+    l_i = 0.0
+    acc = tl.zeros([BLOCK_HEAD_DIM], dtype=tl.float32)
+
+    # Process tiles of BLOCK_M tokens
+    num_tiles = tl.cdiv(KV_BLOCK_SIZE, BLOCK_M)
+
+    for block_idx in range(MAX_CONTEXT_BLOCKS):
+        start_pos = block_idx * KV_BLOCK_SIZE
+        block_valid = start_pos < context_len
+
+        physical_block = tl.load(
+            block_table_ptr + batch_idx * max_blocks + block_idx,
+            mask=block_valid,
+            other=-1,
+        )
+
+        # Process BLOCK_M tokens at a time within this KV block
+        for tile_idx in range(num_tiles):
+            tile_start = tile_idx * BLOCK_M
+
+            # First pass: find max QK score in tile (for stable softmax)
+            m_tile = -1e20
+            for m in range(BLOCK_M):
+                slot = tile_start + m
+                token_pos = start_pos + slot
+                token_valid = (
+                    block_valid & (token_pos < context_len) & (physical_block >= 0)
+                    & (slot < KV_BLOCK_SIZE)
+                )
+
+                k_base_offset = (
+                    physical_block * num_layers * num_heads * KV_BLOCK_SIZE * head_dim
+                    + layer_idx * num_heads * KV_BLOCK_SIZE * head_dim
+                    + head_idx * KV_BLOCK_SIZE * head_dim
+                    + slot * head_dim
+                )
+
+                load_mask = head_mask & token_valid
+                k_encoded = tl.load(
+                    k_cache_ptr + k_base_offset + head_offsets, mask=load_mask, other=0
+                ).to(tl.uint8)
+
+                k_int4 = decode_hamming84_inline(
+                    k_encoded, lut0, lut1, lut2, lut3, lut4, lut5, lut6, lut7
+                )
+
+                scale_offset = (
+                    physical_block * num_layers * num_heads * KV_BLOCK_SIZE
+                    + layer_idx * num_heads * KV_BLOCK_SIZE
+                    + head_idx * KV_BLOCK_SIZE
+                    + slot
+                )
+                k_scale = tl.load(k_scales_ptr + scale_offset, mask=token_valid, other=1.0)
+
+                k_float = dequantize_int4(k_int4, k_scale)
+
+                qk_partial = q * k_float
+                qk_score = tl.sum(qk_partial, axis=0) * sm_scale
+                qk_score = tl.where(token_valid, qk_score, -1e20)
+
+                m_tile = tl.maximum(m_tile, qk_score)
+
+            # Update global max and rescale accumulator ONCE per tile
+            m_new = tl.maximum(m_i, m_tile)
+            alpha = tl.exp(m_i - m_new)
+            acc = alpha * acc
+            l_i = alpha * l_i
+
+            # Second pass: accumulate with correct softmax weights
+            for m in range(BLOCK_M):
+                slot = tile_start + m
+                token_pos = start_pos + slot
+                token_valid = (
+                    block_valid & (token_pos < context_len) & (physical_block >= 0)
+                    & (slot < KV_BLOCK_SIZE)
+                )
+
+                kv_base_offset = (
+                    physical_block * num_layers * num_heads * KV_BLOCK_SIZE * head_dim
+                    + layer_idx * num_heads * KV_BLOCK_SIZE * head_dim
+                    + head_idx * KV_BLOCK_SIZE * head_dim
+                    + slot * head_dim
+                )
+
+                load_mask = head_mask & token_valid
+
+                # Re-compute K score (trades compute for register pressure)
+                k_encoded = tl.load(
+                    k_cache_ptr + kv_base_offset + head_offsets, mask=load_mask, other=0
+                ).to(tl.uint8)
+                k_int4 = decode_hamming84_inline(
+                    k_encoded, lut0, lut1, lut2, lut3, lut4, lut5, lut6, lut7
+                )
+
+                scale_offset = (
+                    physical_block * num_layers * num_heads * KV_BLOCK_SIZE
+                    + layer_idx * num_heads * KV_BLOCK_SIZE
+                    + head_idx * KV_BLOCK_SIZE
+                    + slot
+                )
+                k_scale = tl.load(k_scales_ptr + scale_offset, mask=token_valid, other=1.0)
+
+                k_float = dequantize_int4(k_int4, k_scale)
+                qk_score = tl.sum(q * k_float, axis=0) * sm_scale
+                qk_score = tl.where(token_valid, qk_score, -1e20)
+
+                # Load and decode V
+                v_encoded = tl.load(
+                    v_cache_ptr + kv_base_offset + head_offsets, mask=load_mask, other=0
+                ).to(tl.uint8)
+                v_int4 = decode_hamming84_inline(
+                    v_encoded, lut0, lut1, lut2, lut3, lut4, lut5, lut6, lut7
+                )
+                v_scale = tl.load(v_scales_ptr + scale_offset, mask=token_valid, other=1.0)
+                v_float = dequantize_int4(v_int4, v_scale)
+
+                beta = tl.exp(qk_score - m_new)
+                acc = acc + beta * v_float
+                l_i = l_i + tl.where(token_valid, beta, 0.0)
+
+            m_i = m_new
 
     output = tl.where(l_i > 0, acc / l_i, tl.zeros([BLOCK_HEAD_DIM], dtype=tl.float32))
 
@@ -279,14 +472,49 @@ def paged_attention_ecc(
     v_cache,
     block_table,
     context_lens,
-    scales,
+    k_scales,
     layer_idx,
     block_size,
     sm_scale=None,
     codec="hamming84",
     syndrome_table=None,
+    use_tiled=False,
+    block_m=4,
+    v_scales=None,
 ):
+    """
+    Paged attention with ECC-protected KV cache.
+
+    Args:
+        query: Query tensor [batch_size, num_heads, head_dim]
+        k_cache: Key cache [num_blocks, num_layers, num_heads, block_size * head_dim]
+        v_cache: Value cache [num_blocks, num_layers, num_heads, block_size * head_dim]
+        block_table: Physical block mapping [batch_size, max_blocks]
+        context_lens: Context lengths [batch_size]
+        k_scales: Key quantization scales [num_blocks, num_layers, num_heads, block_size]
+        layer_idx: Current layer index
+        block_size: Tokens per KV block
+        sm_scale: Softmax scale (default: 1/sqrt(head_dim))
+        codec: ECC codec ("hamming84" or "golay")
+        syndrome_table: Optional syndrome table for Golay
+        use_tiled: Use tiled kernel (default: False, NOT recommended - see note)
+        block_m: Tokens per tile for tiled kernel (default: 4)
+        v_scales: Value quantization scales (if None, uses k_scales for both)
+
+    Note:
+        The tiled kernel was implemented to reduce softmax rescaling overhead,
+        but benchmarking shows it's actually SLOWER than the original kernel.
+        ECC decoding dominates the computation, making tiling ineffective.
+        Keep use_tiled=False for best performance.
+
+    Returns:
+        Output tensor [batch_size, num_heads, head_dim]
+    """
     assert query.is_cuda, "Query must be on CUDA"
+
+    # Handle backward compatibility: if v_scales not provided, use k_scales for both
+    if v_scales is None:
+        v_scales = k_scales
 
     batch_size, num_heads, head_dim = query.shape
     num_blocks, num_layers, _, codewords_per_head = k_cache.shape
@@ -310,35 +538,72 @@ def paged_attention_ecc(
         KV_BLOCK_SIZE = block_size
 
         grid = (batch_size * num_heads,)
-        paged_attention_ecc_kernel[grid](
-            output,
-            query,
-            k_cache,
-            v_cache,
-            block_table,
-            context_lens,
-            scales,
-            batch_size,
-            num_heads,
-            head_dim,
-            num_layers,
-            layer_idx,
-            block_size,
-            max_blocks,
-            max_context_len,
-            sm_scale,
-            int(lut[0]),
-            int(lut[1]),
-            int(lut[2]),
-            int(lut[3]),
-            int(lut[4]),
-            int(lut[5]),
-            int(lut[6]),
-            int(lut[7]),
-            BLOCK_HEAD_DIM=BLOCK_HEAD_DIM,
-            MAX_CONTEXT_BLOCKS=MAX_CONTEXT_BLOCKS,
-            KV_BLOCK_SIZE=KV_BLOCK_SIZE,
-        )
+
+        if use_tiled and block_size >= block_m:
+            # Use tiled kernel for better parallelism
+            paged_attention_ecc_tiled_kernel[grid](
+                output,
+                query,
+                k_cache,
+                v_cache,
+                block_table,
+                context_lens,
+                k_scales,
+                v_scales,
+                batch_size,
+                num_heads,
+                head_dim,
+                num_layers,
+                layer_idx,
+                block_size,
+                max_blocks,
+                max_context_len,
+                sm_scale,
+                int(lut[0]),
+                int(lut[1]),
+                int(lut[2]),
+                int(lut[3]),
+                int(lut[4]),
+                int(lut[5]),
+                int(lut[6]),
+                int(lut[7]),
+                BLOCK_HEAD_DIM=BLOCK_HEAD_DIM,
+                MAX_CONTEXT_BLOCKS=MAX_CONTEXT_BLOCKS,
+                KV_BLOCK_SIZE=KV_BLOCK_SIZE,
+                BLOCK_M=block_m,
+            )
+        else:
+            # Use original token-by-token kernel
+            paged_attention_ecc_kernel[grid](
+                output,
+                query,
+                k_cache,
+                v_cache,
+                block_table,
+                context_lens,
+                k_scales,
+                v_scales,
+                batch_size,
+                num_heads,
+                head_dim,
+                num_layers,
+                layer_idx,
+                block_size,
+                max_blocks,
+                max_context_len,
+                sm_scale,
+                int(lut[0]),
+                int(lut[1]),
+                int(lut[2]),
+                int(lut[3]),
+                int(lut[4]),
+                int(lut[5]),
+                int(lut[6]),
+                int(lut[7]),
+                BLOCK_HEAD_DIM=BLOCK_HEAD_DIM,
+                MAX_CONTEXT_BLOCKS=MAX_CONTEXT_BLOCKS,
+                KV_BLOCK_SIZE=KV_BLOCK_SIZE,
+            )
 
     elif codec == "golay":
         assert k_cache.dtype == torch.int32, "Golay K cache must be int32"

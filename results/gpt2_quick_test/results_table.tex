@@ -1,0 +1,27 @@
+\begin{table}[h]
+\centering
+\caption{Perplexity vs BER across protection strategies}
+\begin{tabular}{lccc}
+\toprule
+BER & INT4 & Hamming(8,4) & H(8,4)+Interp \\
+\midrule
+0 & $1.77$ & $1.77$ & $1.77$ \\
+$1e-03$ & $1.86$ & $1.77$ & $1.77$ \\
+$1e-02$ & $9.42$ & $2.26$ & $1.81$ \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{table}[h]
+\centering
+\caption{Error Correction Statistics vs BER}
+\begin{tabular}{lccc}
+\toprule
+BER & INT4 & Hamming(8,4) & H(8,4)+Interp \\
+\midrule
+0 & - & - & - \\
+$1e-03$ & - & 89,980 / 376 & 89,980 / 376 \\
+$1e-02$ & - & 840,350 / 33,969 & 840,350 / 33,969 \\
+\bottomrule
+\end{tabular}
+\end{table}

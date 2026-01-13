@@ -6,6 +6,177 @@ from .config import FAULT_INJECTION_BLOCK_SIZE
 
 
 @triton.jit
+def fault_inject_uint8_vectorized_kernel(
+    data_ptr,
+    output_ptr,
+    error_count_ptr,
+    N,
+    n_bits: tl.constexpr,
+    seed,
+    ber_threshold,
+    BLOCK_SIZE: tl.constexpr,
+):
+    """
+    Vectorized fault injection using rand4x to reduce RNG overhead.
+
+    Uses 2 rand4x calls (8 random values) instead of 8 rand calls.
+    """
+    pid = tl.program_id(0)
+    offsets = pid * BLOCK_SIZE + tl.arange(0, BLOCK_SIZE)
+    mask = offsets < N
+
+    data = tl.load(data_ptr + offsets, mask=mask, other=0).to(tl.uint8)
+
+    error_mask = tl.zeros([BLOCK_SIZE], dtype=tl.uint8)
+    error_count = tl.zeros([BLOCK_SIZE], dtype=tl.uint8)
+
+    # Use different seed bases for the two rand4x calls
+    base_seed = seed * N + offsets
+
+    # First rand4x call - bits 0-3
+    r0, r1, r2, r3 = tl.rand4x(base_seed.to(tl.int32), offsets.to(tl.int32))
+
+    flip_0 = (r0 < ber_threshold).to(tl.uint8)
+    error_mask = error_mask | (flip_0 << 0)
+    error_count = error_count + flip_0
+
+    if n_bits >= 2:
+        flip_1 = (r1 < ber_threshold).to(tl.uint8)
+        error_mask = error_mask | (flip_1 << 1)
+        error_count = error_count + flip_1
+
+    if n_bits >= 3:
+        flip_2 = (r2 < ber_threshold).to(tl.uint8)
+        error_mask = error_mask | (flip_2 << 2)
+        error_count = error_count + flip_2
+
+    if n_bits >= 4:
+        flip_3 = (r3 < ber_threshold).to(tl.uint8)
+        error_mask = error_mask | (flip_3 << 3)
+        error_count = error_count + flip_3
+
+    # Second rand4x call - bits 4-7
+    if n_bits >= 5:
+        # Use offset + N as different seed for second batch
+        r4, r5, r6, r7 = tl.rand4x((base_seed + N).to(tl.int32), offsets.to(tl.int32))
+
+        flip_4 = (r4 < ber_threshold).to(tl.uint8)
+        error_mask = error_mask | (flip_4 << 4)
+        error_count = error_count + flip_4
+
+        if n_bits >= 6:
+            flip_5 = (r5 < ber_threshold).to(tl.uint8)
+            error_mask = error_mask | (flip_5 << 5)
+            error_count = error_count + flip_5
+
+        if n_bits >= 7:
+            flip_6 = (r6 < ber_threshold).to(tl.uint8)
+            error_mask = error_mask | (flip_6 << 6)
+            error_count = error_count + flip_6
+
+        if n_bits >= 8:
+            flip_7 = (r7 < ber_threshold).to(tl.uint8)
+            error_mask = error_mask | (flip_7 << 7)
+            error_count = error_count + flip_7
+
+    corrupted = data ^ error_mask
+
+    tl.store(output_ptr + offsets, corrupted, mask=mask)
+    tl.store(error_count_ptr + offsets, error_count, mask=mask)
+
+
+@triton.jit
+def fault_inject_int32_vectorized_kernel(
+    data_ptr,
+    output_ptr,
+    error_count_ptr,
+    N,
+    n_bits: tl.constexpr,
+    seed,
+    ber_threshold,
+    BLOCK_SIZE: tl.constexpr,
+):
+    """
+    Vectorized fault injection for int32 using rand4x.
+
+    Uses 6 rand4x calls (24 random values) instead of 24 rand calls for 24-bit.
+    """
+    pid = tl.program_id(0)
+    offsets = pid * BLOCK_SIZE + tl.arange(0, BLOCK_SIZE)
+    mask = offsets < N
+
+    data = tl.load(data_ptr + offsets, mask=mask, other=0).to(tl.int32)
+
+    error_mask = tl.zeros([BLOCK_SIZE], dtype=tl.int32)
+    error_count = tl.zeros([BLOCK_SIZE], dtype=tl.int32)
+
+    base_seed = seed * N + offsets
+
+    # Batch 0: bits 0-3
+    r0, r1, r2, r3 = tl.rand4x(base_seed.to(tl.int32), offsets.to(tl.int32))
+    for i, r in enumerate([r0, r1, r2, r3]):
+        if i < n_bits:
+            flip = (r < ber_threshold).to(tl.int32)
+            error_mask = error_mask | (flip << i)
+            error_count = error_count + flip
+
+    # Batch 1: bits 4-7
+    if n_bits > 4:
+        r4, r5, r6, r7 = tl.rand4x((base_seed + N).to(tl.int32), offsets.to(tl.int32))
+        for i, r in enumerate([r4, r5, r6, r7]):
+            bit_idx = 4 + i
+            if bit_idx < n_bits:
+                flip = (r < ber_threshold).to(tl.int32)
+                error_mask = error_mask | (flip << bit_idx)
+                error_count = error_count + flip
+
+    # Batch 2: bits 8-11
+    if n_bits > 8:
+        r8, r9, r10, r11 = tl.rand4x((base_seed + 2*N).to(tl.int32), offsets.to(tl.int32))
+        for i, r in enumerate([r8, r9, r10, r11]):
+            bit_idx = 8 + i
+            if bit_idx < n_bits:
+                flip = (r < ber_threshold).to(tl.int32)
+                error_mask = error_mask | (flip << bit_idx)
+                error_count = error_count + flip
+
+    # Batch 3: bits 12-15
+    if n_bits > 12:
+        r12, r13, r14, r15 = tl.rand4x((base_seed + 3*N).to(tl.int32), offsets.to(tl.int32))
+        for i, r in enumerate([r12, r13, r14, r15]):
+            bit_idx = 12 + i
+            if bit_idx < n_bits:
+                flip = (r < ber_threshold).to(tl.int32)
+                error_mask = error_mask | (flip << bit_idx)
+                error_count = error_count + flip
+
+    # Batch 4: bits 16-19
+    if n_bits > 16:
+        r16, r17, r18, r19 = tl.rand4x((base_seed + 4*N).to(tl.int32), offsets.to(tl.int32))
+        for i, r in enumerate([r16, r17, r18, r19]):
+            bit_idx = 16 + i
+            if bit_idx < n_bits:
+                flip = (r < ber_threshold).to(tl.int32)
+                error_mask = error_mask | (flip << bit_idx)
+                error_count = error_count + flip
+
+    # Batch 5: bits 20-23
+    if n_bits > 20:
+        r20, r21, r22, r23 = tl.rand4x((base_seed + 5*N).to(tl.int32), offsets.to(tl.int32))
+        for i, r in enumerate([r20, r21, r22, r23]):
+            bit_idx = 20 + i
+            if bit_idx < n_bits:
+                flip = (r < ber_threshold).to(tl.int32)
+                error_mask = error_mask | (flip << bit_idx)
+                error_count = error_count + flip
+
+    corrupted = data ^ error_mask
+
+    tl.store(output_ptr + offsets, corrupted, mask=mask)
+    tl.store(error_count_ptr + offsets, error_count.to(tl.uint8), mask=mask)
+
+
+@triton.jit
 def fault_inject_uint8_kernel(
     data_ptr,
     output_ptr,
@@ -179,6 +350,71 @@ def inject_bit_errors_triton_batched(data, ber, n_bits, seed=0):
         data, ber, n_bits, seed, return_stats=True
     )
     return corrupted, total_errors
+
+
+def inject_bit_errors_triton_vectorized(data, ber, n_bits, seed=0, return_stats=False):
+    """
+    Vectorized fault injection using rand4x for better performance.
+
+    Uses 2 rand4x calls (8 random values) instead of 8 rand calls for uint8,
+    and 6 rand4x calls instead of 24 for int32/24-bit.
+    """
+    assert data.is_cuda, "Input must be on CUDA device"
+
+    if ber <= 0:
+        if return_stats:
+            return data, (0, 0)
+        return data
+
+    N = data.numel()
+    device = data.device
+    original_shape = data.shape
+
+    flat_data = data.flatten()
+
+    if flat_data.dtype == torch.uint8:
+        corrupted = torch.empty_like(flat_data)
+        error_counts = torch.empty(N, dtype=torch.uint8, device=device)
+
+        grid = lambda meta: (triton.cdiv(N, meta["BLOCK_SIZE"]),)
+        fault_inject_uint8_vectorized_kernel[grid](
+            flat_data,
+            corrupted,
+            error_counts,
+            N,
+            n_bits,
+            seed,
+            ber,
+            BLOCK_SIZE=FAULT_INJECTION_BLOCK_SIZE,
+        )
+
+    elif flat_data.dtype == torch.int32:
+        corrupted = torch.empty_like(flat_data)
+        error_counts = torch.empty(N, dtype=torch.uint8, device=device)
+
+        grid = lambda meta: (triton.cdiv(N, meta["BLOCK_SIZE"]),)
+        fault_inject_int32_vectorized_kernel[grid](
+            flat_data,
+            corrupted,
+            error_counts,
+            N,
+            n_bits,
+            seed,
+            ber,
+            BLOCK_SIZE=FAULT_INJECTION_BLOCK_SIZE,
+        )
+
+    else:
+        raise ValueError(f"Unsupported dtype: {flat_data.dtype}. Use uint8 or int32.")
+
+    corrupted = corrupted.view(original_shape)
+
+    if return_stats:
+        total_errors = int(error_counts.sum())
+        elements_with_errors = int((error_counts > 0).sum())
+        return corrupted, (total_errors, elements_with_errors)
+
+    return corrupted
 
 
 def verify_triton_fault_injection(target_ber=0.05, n_values=100_000, n_bits=8, seed=42, tolerance=0.01):

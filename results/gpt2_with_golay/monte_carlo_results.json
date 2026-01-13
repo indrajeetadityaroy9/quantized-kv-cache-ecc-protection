@@ -1,0 +1,250 @@
+{
+  "config": {
+    "model_name": "gpt2",
+    "cache_modes": [
+      "int4",
+      "int4-hamming84",
+      "int4-hamming84-interp",
+      "int12-golay"
+    ],
+    "ber_levels": [
+      0.0,
+      0.0001,
+      0.001,
+      0.01
+    ],
+    "seeds": [
+      42,
+      101,
+      997
+    ],
+    "max_samples": 3,
+    "max_length": 256,
+    "stride": 128,
+    "device": "auto",
+    "output_dir": "results/gpt2_with_golay",
+    "backend": "triton",
+    "compute_kl_divergence": true,
+    "compute_top5": true,
+    "compute_catastrophic": true,
+    "catastrophic_threshold": 1000.0
+  },
+  "results": {
+    "int4": {
+      "0.0": {
+        "ppl_mean": 1.773889183998108,
+        "ppl_std": 0.0,
+        "kl_divergence_mean": 0.016637166341145832,
+        "kl_divergence_std": 0.0,
+        "top5_accuracy_mean": 0.9393939393939394,
+        "top5_accuracy_std": 0.0,
+        "catastrophic_rate_mean": 0.0,
+        "catastrophic_rate_std": 0.0,
+        "errors_corrected_mean": 0.0,
+        "errors_detected_mean": 0.0,
+        "n_trials": 3
+      },
+      "0.0001": {
+        "ppl_mean": 1.7732473611831665,
+        "ppl_std": 0.01773377417405972,
+        "kl_divergence_mean": 0.02083926730685764,
+        "kl_divergence_std": 0.0009555145217146458,
+        "top5_accuracy_mean": 0.9404040404040405,
+        "top5_accuracy_std": 0.0014284985478515682,
+        "catastrophic_rate_mean": 0.0,
+        "catastrophic_rate_std": 0.0,
+        "errors_corrected_mean": 0.0,
+        "errors_detected_mean": 0.0,
+        "n_trials": 3
+      },
+      "0.001": {
+        "ppl_mean": 1.8824801445007324,
+        "ppl_std": 0.028184060169801368,
+        "kl_divergence_mean": 0.07524278428819443,
+        "kl_divergence_std": 0.024574410659565706,
+        "top5_accuracy_mean": 0.9393939393939394,
+        "top5_accuracy_std": 0.004285495643554809,
+        "catastrophic_rate_mean": 0.0,
+        "catastrophic_rate_std": 0.0,
+        "errors_corrected_mean": 0.0,
+        "errors_detected_mean": 0.0,
+        "n_trials": 3
+      },
+      "0.01": {
+        "ppl_mean": 7.723482767740886,
+        "ppl_std": 1.3151287897640507,
+        "kl_divergence_mean": 1.52490234375,
+        "kl_divergence_std": 0.07195078222506267,
+        "top5_accuracy_mean": 0.8404040404040404,
+        "top5_accuracy_std": 0.02725401527925664,
+        "catastrophic_rate_mean": 0.0,
+        "catastrophic_rate_std": 0.0,
+        "errors_corrected_mean": 0.0,
+        "errors_detected_mean": 0.0,
+        "n_trials": 3
+      }
+    },
+    "int4-hamming84": {
+      "0.0": {
+        "ppl_mean": 1.773889183998108,
+        "ppl_std": 0.0,
+        "kl_divergence_mean": 0.016637166341145832,
+        "kl_divergence_std": 0.0,
+        "top5_accuracy_mean": 0.9393939393939394,
+        "top5_accuracy_std": 0.0,
+        "catastrophic_rate_mean": 0.0,
+        "catastrophic_rate_std": 0.0,
+        "errors_corrected_mean": 0.0,
+        "errors_detected_mean": 0.0,
+        "n_trials": 3
+      },
+      "0.0001": {
+        "ppl_mean": 1.773889183998108,
+        "ppl_std": 0.0,
+        "kl_divergence_mean": 0.016637166341145832,
+        "kl_divergence_std": 0.0,
+        "top5_accuracy_mean": 0.9393939393939394,
+        "top5_accuracy_std": 0.0,
+        "catastrophic_rate_mean": 0.0,
+        "catastrophic_rate_std": 0.0,
+        "errors_corrected_mean": 19098.0,
+        "errors_detected_mean": 10.0,
+        "n_trials": 3
+      },
+      "0.001": {
+        "ppl_mean": 1.769357403119405,
+        "ppl_std": 0.012176169220940825,
+        "kl_divergence_mean": 0.018721686469184026,
+        "kl_divergence_std": 0.0035496498954164313,
+        "top5_accuracy_mean": 0.9373737373737375,
+        "top5_accuracy_std": 0.0014284985478516202,
+        "catastrophic_rate_mean": 0.0,
+        "catastrophic_rate_std": 0.0,
+        "errors_corrected_mean": 191009.33333333334,
+        "errors_detected_mean": 826.0,
+        "n_trials": 3
+      },
+      "0.01": {
+        "ppl_mean": 2.1426392793655396,
+        "ppl_std": 0.11203199461411421,
+        "kl_divergence_mean": 0.3126559787326389,
+        "kl_divergence_std": 0.03714642648688259,
+        "top5_accuracy_mean": 0.9313131313131313,
+        "top5_accuracy_std": 0.012453361622159539,
+        "catastrophic_rate_mean": 0.0,
+        "catastrophic_rate_std": 0.0,
+        "errors_corrected_mean": 1787019.6666666667,
+        "errors_detected_mean": 71835.0,
+        "n_trials": 3
+      }
+    },
+    "int4-hamming84-interp": {
+      "0.0": {
+        "ppl_mean": 1.773889183998108,
+        "ppl_std": 0.0,
+        "kl_divergence_mean": 0.016637166341145832,
+        "kl_divergence_std": 0.0,
+        "top5_accuracy_mean": 0.9393939393939394,
+        "top5_accuracy_std": 0.0,
+        "catastrophic_rate_mean": 0.0,
+        "catastrophic_rate_std": 0.0,
+        "errors_corrected_mean": 0.0,
+        "errors_detected_mean": 0.0,
+        "n_trials": 3
+      },
+      "0.0001": {
+        "ppl_mean": 1.773889183998108,
+        "ppl_std": 0.0,
+        "kl_divergence_mean": 0.016637166341145832,
+        "kl_divergence_std": 0.0,
+        "top5_accuracy_mean": 0.9393939393939394,
+        "top5_accuracy_std": 0.0,
+        "catastrophic_rate_mean": 0.0,
+        "catastrophic_rate_std": 0.0,
+        "errors_corrected_mean": 19098.0,
+        "errors_detected_mean": 10.0,
+        "n_trials": 3
+      },
+      "0.001": {
+        "ppl_mean": 1.771358331044515,
+        "ppl_std": 0.010596208005405467,
+        "kl_divergence_mean": 0.015648312038845483,
+        "kl_divergence_std": 0.0007094883673241835,
+        "top5_accuracy_mean": 0.9373737373737375,
+        "top5_accuracy_std": 0.0014284985478516202,
+        "catastrophic_rate_mean": 0.0,
+        "catastrophic_rate_std": 0.0,
+        "errors_corrected_mean": 191009.33333333334,
+        "errors_detected_mean": 826.0,
+        "n_trials": 3
+      },
+      "0.01": {
+        "ppl_mean": 1.8124390840530396,
+        "ppl_std": 0.002903284071020513,
+        "kl_divergence_mean": 0.05640411376953125,
+        "kl_divergence_std": 0.010916975491215015,
+        "top5_accuracy_mean": 0.9414141414141414,
+        "top5_accuracy_std": 0.0014284985478515682,
+        "catastrophic_rate_mean": 0.0,
+        "catastrophic_rate_std": 0.0,
+        "errors_corrected_mean": 1787019.6666666667,
+        "errors_detected_mean": 71835.0,
+        "n_trials": 3
+      }
+    },
+    "int12-golay": {
+      "0.0": {
+        "ppl_mean": 1.773889183998108,
+        "ppl_std": 0.0,
+        "kl_divergence_mean": 0.016637166341145832,
+        "kl_divergence_std": 0.0,
+        "top5_accuracy_mean": 0.9393939393939394,
+        "top5_accuracy_std": 0.0,
+        "catastrophic_rate_mean": 0.0,
+        "catastrophic_rate_std": 0.0,
+        "errors_corrected_mean": 0.0,
+        "errors_detected_mean": 0.0,
+        "n_trials": 3
+      },
+      "0.0001": {
+        "ppl_mean": 1.773889183998108,
+        "ppl_std": 0.0,
+        "kl_divergence_mean": 0.016637166341145832,
+        "kl_divergence_std": 0.0,
+        "top5_accuracy_mean": 0.9393939393939394,
+        "top5_accuracy_std": 0.0,
+        "catastrophic_rate_mean": 0.0,
+        "catastrophic_rate_std": 0.0,
+        "errors_corrected_mean": 22168.0,
+        "errors_detected_mean": 0.0,
+        "n_trials": 3
+      },
+      "0.001": {
+        "ppl_mean": 1.773889183998108,
+        "ppl_std": 0.0,
+        "kl_divergence_mean": 0.016637166341145832,
+        "kl_divergence_std": 0.0,
+        "top5_accuracy_mean": 0.9393939393939394,
+        "top5_accuracy_std": 0.0,
+        "catastrophic_rate_mean": 0.0,
+        "catastrophic_rate_std": 0.0,
+        "errors_corrected_mean": 224072.66666666666,
+        "errors_detected_mean": 0.0,
+        "n_trials": 3
+      },
+      "0.01": {
+        "ppl_mean": 1.7880747318267822,
+        "ppl_std": 0.010780608726199528,
+        "kl_divergence_mean": 0.023420969645182293,
+        "kl_divergence_std": 0.005390096593323249,
+        "top5_accuracy_mean": 0.9404040404040405,
+        "top5_accuracy_std": 0.0037794519058322387,
+        "catastrophic_rate_mean": 0.0,
+        "catastrophic_rate_std": 0.0,
+        "errors_corrected_mean": 2250610.3333333335,
+        "errors_detected_mean": 877.3333333333334,
+        "n_trials": 3
+      }
+    }
+  }
+}

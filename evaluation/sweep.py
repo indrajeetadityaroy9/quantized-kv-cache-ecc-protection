@@ -88,6 +88,26 @@ class TrialResult:
     transfer_overhead_pct: float = 0.0
     is_cpu_bound: bool = True
 
+    # Error correction statistics (Priority 2)
+    injection_count: int = 0  # Total bit flips injected
+    correction_rate: float = 0.0  # corrected / injected
+    detection_rate: float = 0.0  # detected / injected
+    silent_corruption_rate: float = 0.0  # 1 - (corrected + detected) / injected
+
+    @property
+    def computed_correction_rate(self) -> float:
+        """Compute correction rate from raw counts."""
+        if self.injection_count == 0:
+            return 0.0
+        return self.errors_corrected / self.injection_count
+
+    @property
+    def computed_detection_rate(self) -> float:
+        """Compute detection rate from raw counts."""
+        if self.injection_count == 0:
+            return 0.0
+        return self.errors_detected / self.injection_count
+
 
 @dataclass
 class AggregatedResult:
@@ -116,6 +136,15 @@ class AggregatedResult:
     transfer_overhead_pct_mean: float = 0.0
     transfer_overhead_pct_std: float = 0.0
     is_cpu_bound: bool = True
+
+    # Error correction statistics (Priority 2)
+    injection_count_mean: float = 0.0
+    correction_rate_mean: float = 0.0
+    correction_rate_std: float = 0.0
+    detection_rate_mean: float = 0.0
+    detection_rate_std: float = 0.0
+    silent_corruption_rate_mean: float = 0.0
+    silent_corruption_rate_std: float = 0.0
 
     @classmethod
     def from_trials(cls, trials: List[TrialResult]) -> "AggregatedResult":
@@ -154,6 +183,19 @@ class AggregatedResult:
         transfer_overheads = [t.transfer_overhead_pct for t in trials]
         transfer_mean, transfer_std = mean_std(transfer_overheads)
 
+        # Error correction statistics
+        correction_rates = [t.correction_rate for t in trials]
+        correction_rate_mean, correction_rate_std = mean_std(correction_rates)
+
+        detection_rates = [t.detection_rate for t in trials]
+        detection_rate_mean, detection_rate_std = mean_std(detection_rates)
+
+        silent_rates = [t.silent_corruption_rate for t in trials]
+        silent_rate_mean, silent_rate_std = mean_std(silent_rates)
+
+        injection_counts = [t.injection_count for t in trials]
+        injection_count_mean = sum(injection_counts) / len(trials)
+
         return cls(
             cache_mode=cache_mode,
             ber=ber,
@@ -178,6 +220,13 @@ class AggregatedResult:
             transfer_overhead_pct_mean=transfer_mean,
             transfer_overhead_pct_std=transfer_std,
             is_cpu_bound=trials[0].is_cpu_bound,
+            injection_count_mean=injection_count_mean,
+            correction_rate_mean=correction_rate_mean,
+            correction_rate_std=correction_rate_std,
+            detection_rate_mean=detection_rate_mean,
+            detection_rate_std=detection_rate_std,
+            silent_corruption_rate_mean=silent_rate_mean,
+            silent_corruption_rate_std=silent_rate_std,
         )
 
 
@@ -459,6 +508,17 @@ def _run_single_trial_triton(
             errors_corrected = stats.get("errors_corrected", 0)
             errors_detected = stats.get("errors_detected", 0)
             total_values = stats.get("total_values", 0)
+            injection_count = stats.get("injection_count", 0)
+
+    # Compute error correction statistics
+    if injection_count > 0:
+        correction_rate = errors_corrected / injection_count
+        detection_rate = errors_detected / injection_count
+        silent_corruption_rate = max(0.0, 1.0 - correction_rate - detection_rate)
+    else:
+        correction_rate = 0.0
+        detection_rate = 0.0
+        silent_corruption_rate = 0.0
 
     return TrialResult(
         cache_mode=cache_mode,
@@ -476,4 +536,8 @@ def _run_single_trial_triton(
         throughput_mvalues_sec=0.0,
         transfer_overhead_pct=0.0,
         is_cpu_bound=False,
+        injection_count=injection_count,
+        correction_rate=correction_rate,
+        detection_rate=detection_rate,
+        silent_corruption_rate=silent_corruption_rate,
     )

@@ -70,14 +70,28 @@ MODELS = {
         "type": "gpt2",
         "layers": 12,
         "hidden_size": 768,
+        "num_attention_heads": 12,
+        "num_kv_heads": 12,  # No GQA
         "requires_auth": False,
         "gpu": "T4",
+    },
+    "mistral-7b": {
+        "hf_id": "mistralai/Mistral-7B-v0.3",
+        "type": "mistral",
+        "layers": 32,
+        "hidden_size": 4096,
+        "num_attention_heads": 32,
+        "num_kv_heads": 8,  # GQA: 4 query heads per KV head
+        "requires_auth": False,
+        "gpu": "A100-40GB",
     },
     "llama-3.1-8b": {
         "hf_id": "meta-llama/Llama-3.1-8B",
         "type": "llama",
         "layers": 32,
         "hidden_size": 4096,
+        "num_attention_heads": 32,
+        "num_kv_heads": 8,  # GQA: 4 query heads per KV head
         "requires_auth": True,
         "gpu": "A100-80GB",
     },

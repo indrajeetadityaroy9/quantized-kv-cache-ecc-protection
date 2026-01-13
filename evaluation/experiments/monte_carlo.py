@@ -550,3 +550,103 @@ def save_results(results, config, output_dir):
     print(f"  - {json_path}")
     print(f"  - {ascii_path}")
     print(f"  - {latex_path}")
+
+
+def main():
+    import argparse
+    from datetime import datetime
+
+    parser = argparse.ArgumentParser(
+        description="Run Monte Carlo BER sweep experiment"
+    )
+    parser.add_argument(
+        "--model",
+        type=str,
+        default="gpt2",
+        help="Model to use (gpt2, mistral-7b, llama-3.1-8b)",
+    )
+    parser.add_argument(
+        "--cache-modes",
+        type=str,
+        nargs="+",
+        default=None,
+        help="Cache modes to test (e.g., int4 int4-hamming84 int4-hamming84-interp)",
+    )
+    parser.add_argument(
+        "--ber-levels",
+        type=float,
+        nargs="+",
+        default=None,
+        help="BER levels to test (e.g., 0 1e-4 1e-3 1e-2)",
+    )
+    parser.add_argument(
+        "--seeds",
+        type=int,
+        nargs="+",
+        default=None,
+        help="Random seeds (e.g., 42 101 997)",
+    )
+    parser.add_argument(
+        "--max-samples",
+        type=int,
+        default=50,
+        help="Max WikiText-2 samples to use",
+    )
+    parser.add_argument(
+        "--output",
+        type=str,
+        default=None,
+        help="Output directory for results",
+    )
+    parser.add_argument(
+        "--no-kl",
+        action="store_true",
+        help="Disable KL divergence computation",
+    )
+    parser.add_argument(
+        "--no-top5",
+        action="store_true",
+        help="Disable top-5 accuracy computation",
+    )
+    parser.add_argument(
+        "--no-catastrophic",
+        action="store_true",
+        help="Disable catastrophic failure rate computation",
+    )
+
+    args = parser.parse_args()
+
+    # Set default output dir with timestamp
+    if args.output is None:
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        args.output = f"results/{args.model}_sweep_{timestamp}"
+
+    # Create config
+    config = MonteCarloConfig(
+        model_name=args.model,
+        cache_modes=args.cache_modes,
+        ber_levels=args.ber_levels,
+        seeds=args.seeds,
+        max_samples=args.max_samples,
+        output_dir=args.output,
+        compute_kl_divergence=not args.no_kl,
+        compute_top5=not args.no_top5,
+        compute_catastrophic=not args.no_catastrophic,
+    )
+
+    # Load model
+    print(f"Loading model: {args.model}")
+    model, tokenizer = load_model(args.model)
+
+    # Run experiment
+    results = run_monte_carlo_experiment(model, tokenizer, config)
+
+    # Save results
+    save_results(results, config, args.output)
+
+    # Print summary table
+    print("\n" + format_results_table(results))
+
+
+if __name__ == "__main__":
+    main()

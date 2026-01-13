@@ -5,6 +5,62 @@ import triton.language as tl
 from .config import INTERPOLATION_BLOCK_SIZE, ErrorType
 
 
+# Autotune configurations for interpolation kernel
+INTERPOLATION_CONFIGS = [
+    triton.Config({'BLOCK_SIZE': 512}, num_warps=4, num_stages=2),
+    triton.Config({'BLOCK_SIZE': 1024}, num_warps=4, num_stages=3),
+    triton.Config({'BLOCK_SIZE': 1024}, num_warps=8, num_stages=2),
+    triton.Config({'BLOCK_SIZE': 2048}, num_warps=8, num_stages=3),
+]
+
+
+@triton.autotune(
+    configs=INTERPOLATION_CONFIGS,
+    key=['seq_len'],
+)
+@triton.jit
+def interpolate_double_errors_kernel_autotuned(
+    q_ptr,
+    error_type_ptr,
+    output_ptr,
+    seq_len,
+    num_sequences,
+    BLOCK_SIZE: tl.constexpr,
+    DOUBLE_DETECTED: tl.constexpr,
+):
+    """Autotuned version of interpolation kernel for performance."""
+    pid = tl.program_id(0)
+    num_blocks_per_seq = tl.cdiv(seq_len, BLOCK_SIZE)
+    seq_idx = pid // num_blocks_per_seq
+    block_idx = pid % num_blocks_per_seq
+
+    local_offset = block_idx * BLOCK_SIZE
+    offsets = local_offset + tl.arange(0, BLOCK_SIZE)
+    mask = (seq_idx < num_sequences) & (offsets < seq_len)
+
+    base = seq_idx * seq_len
+
+    q = tl.load(q_ptr + base + offsets, mask=mask, other=0).to(tl.float32)
+    err = tl.load(error_type_ptr + base + offsets, mask=mask, other=0)
+
+    is_double = err == DOUBLE_DETECTED
+
+    left_idx = tl.maximum(offsets - 1, 0)
+    right_idx = tl.minimum(offsets + 1, seq_len - 1)
+
+    left_val = tl.load(q_ptr + base + left_idx, mask=mask, other=0).to(tl.float32)
+    right_val = tl.load(q_ptr + base + right_idx, mask=mask, other=0).to(tl.float32)
+
+    interpolated = (left_val + right_val) * 0.5
+
+    result = tl.where(is_double, interpolated, q)
+
+    result = tl.maximum(0.0, tl.minimum(15.0, result + 0.5))
+    result = result.to(tl.uint8)
+
+    tl.store(output_ptr + base + offsets, result, mask=mask)
+
+
 @triton.jit
 def interpolate_double_errors_kernel(
     q_ptr,
@@ -105,6 +161,69 @@ def interpolate_double_errors(q, error_type, original_shape=None, seq_dim=-1):
 
 def interpolate_double_errors_1d(q, error_type):
     return interpolate_double_errors(q, error_type, seq_dim=-1)
+
+
+def interpolate_double_errors_autotuned(q, error_type, original_shape=None, seq_dim=-1):
+    """
+    Autotuned version of interpolate_double_errors.
+
+    Uses Triton autotune to select optimal block size and warp configuration
+    based on sequence length.
+    """
+    assert q.is_cuda, "Input must be on CUDA device"
+    assert error_type.is_cuda, "Error type must be on CUDA device"
+    assert q.shape == error_type.shape, "Shape mismatch between q and error_type"
+
+    has_double_errors = (error_type == ErrorType.DOUBLE_DETECTED).any()
+    if not has_double_errors:
+        return q.clone()
+
+    input_shape = q.shape
+
+    if q.dim() == 1:
+        flat_q = q.unsqueeze(0)
+        flat_err = error_type.unsqueeze(0)
+    elif q.dim() == 2:
+        flat_q = q
+        flat_err = error_type
+    else:
+        if seq_dim < 0:
+            seq_dim = q.dim() + seq_dim
+
+        if seq_dim != q.dim() - 1:
+            perm = list(range(q.dim()))
+            perm.remove(seq_dim)
+            perm.append(seq_dim)
+            q = q.permute(*perm)
+            error_type = error_type.permute(*perm)
+
+        seq_len = q.shape[-1]
+        batch_size = q.numel() // seq_len
+        flat_q = q.reshape(batch_size, seq_len)
+        flat_err = error_type.reshape(batch_size, seq_len)
+
+    flat_q = flat_q.contiguous().to(torch.uint8)
+    flat_err = flat_err.contiguous().to(torch.uint8)
+
+    num_sequences, seq_len = flat_q.shape
+
+    output = torch.empty_like(flat_q)
+
+    # Autotune uses a lambda grid that gets block size from meta
+    def grid(meta):
+        num_blocks_per_seq = triton.cdiv(seq_len, meta['BLOCK_SIZE'])
+        return (num_sequences * num_blocks_per_seq,)
+
+    interpolate_double_errors_kernel_autotuned[grid](
+        flat_q,
+        flat_err,
+        output,
+        seq_len,
+        num_sequences,
+        DOUBLE_DETECTED=ErrorType.DOUBLE_DETECTED,
+    )
+
+    return output.reshape(input_shape)
 
 
 def verify_triton_vs_cpu():

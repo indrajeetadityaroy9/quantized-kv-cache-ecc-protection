@@ -50,14 +50,7 @@ def hamming74_decode_kernel(
     codeword_ptr,
     decoded_ptr,
     error_detected_ptr,
-    lut0: tl.constexpr,
-    lut1: tl.constexpr,
-    lut2: tl.constexpr,
-    lut3: tl.constexpr,
-    lut4: tl.constexpr,
-    lut5: tl.constexpr,
-    lut6: tl.constexpr,
-    lut7: tl.constexpr,
+    lut_ptr,  # Pointer to 8-element syndrome LUT
     N,
     BLOCK_SIZE: tl.constexpr,
 ):
@@ -83,29 +76,8 @@ def hamming74_decode_kernel(
 
     error_detected = (syndrome != 0).to(tl.uint8)
 
-    error_pos = tl.where(
-        syndrome == 0,
-        lut0,
-        tl.where(
-            syndrome == 1,
-            lut1,
-            tl.where(
-                syndrome == 2,
-                lut2,
-                tl.where(
-                    syndrome == 3,
-                    lut3,
-                    tl.where(
-                        syndrome == 4,
-                        lut4,
-                        tl.where(
-                            syndrome == 5, lut5, tl.where(syndrome == 6, lut6, lut7)
-                        ),
-                    ),
-                ),
-            ),
-        ),
-    )
+    # Direct LUT lookup - replaces 8-level nested tl.where()
+    error_pos = tl.load(lut_ptr + syndrome, mask=mask, other=-1)
 
     should_correct = error_pos >= 0
     correction_mask = tl.where(should_correct, 1 << error_pos, 0).to(tl.uint8)
@@ -138,6 +110,17 @@ def hamming74_encode(int4_values):
     return codewords.view(original_shape)
 
 
+# Cache for GPU LUT to avoid repeated transfers
+_syndrome_lut_cache_74 = {}
+
+
+def _get_syndrome_lut_gpu_74(device):
+    """Get syndrome LUT on the specified GPU device (cached)."""
+    if device not in _syndrome_lut_cache_74:
+        _syndrome_lut_cache_74[device] = SYNDROME_LUT_HAMMING74.to(device)
+    return _syndrome_lut_cache_74[device]
+
+
 def hamming74_decode(codewords, return_error_detected=False):
     assert codewords.is_cuda, "Input must be on CUDA device"
 
@@ -148,21 +131,15 @@ def hamming74_decode(codewords, return_error_detected=False):
     decoded = torch.empty_like(flat)
     error_detected = torch.empty_like(flat)
 
-    lut = SYNDROME_LUT_HAMMING74
+    # Get LUT on GPU (cached)
+    lut_gpu = _get_syndrome_lut_gpu_74(codewords.device)
 
     grid = lambda meta: (triton.cdiv(N, meta["BLOCK_SIZE"]),)
     hamming74_decode_kernel[grid](
         flat,
         decoded,
         error_detected,
-        int(lut[0]),
-        int(lut[1]),
-        int(lut[2]),
-        int(lut[3]),
-        int(lut[4]),
-        int(lut[5]),
-        int(lut[6]),
-        int(lut[7]),
+        lut_gpu,
         N,
         BLOCK_SIZE=HAMMING74_BLOCK_SIZE,
     )

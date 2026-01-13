@@ -1,0 +1,51 @@
+\begin{table}[h]
+\centering
+\caption{Perplexity vs BER across protection strategies}
+\begin{tabular}{lcc}
+\toprule
+BER & INT4 & Hamming(8,4) \\
+\midrule
+0 & $1.77$ & $1.77$ \\
+$1e-03$ & $1.86$ & $1.77$ \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{table}[h]
+\centering
+\caption{KL Divergence (nats) vs BER across protection strategies}
+\begin{tabular}{lcc}
+\toprule
+BER & INT4 & Hamming(8,4) \\
+\midrule
+0 & $0.0166$ & $0.0166$ \\
+$1e-03$ & $0.0555$ & $0.0166$ \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{table}[h]
+\centering
+\caption{Top-5 Accuracy (\%) vs BER across protection strategies}
+\begin{tabular}{lcc}
+\toprule
+BER & INT4 & Hamming(8,4) \\
+\midrule
+0 & $93.9$ & $93.9$ \\
+$1e-03$ & $93.6$ & $93.6$ \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{table}[h]
+\centering
+\caption{Error Correction Statistics vs BER}
+\begin{tabular}{lcc}
+\toprule
+BER & INT4 & Hamming(8,4) \\
+\midrule
+0 & - & - \\
+$1e-03$ & - & 191,123 / 824 \\
+\bottomrule
+\end{tabular}
+\end{table}

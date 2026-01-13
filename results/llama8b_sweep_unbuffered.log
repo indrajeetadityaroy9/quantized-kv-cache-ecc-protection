@@ -1,0 +1,111 @@
+2026-01-12 23:08:25.883400: I tensorflow/core/util/port.cc:153] oneDNN custom operations are on. You may see slightly different numerical results due to floating-point round-off errors from different computation orders. To turn them off, set the environment variable `TF_ENABLE_ONEDNN_OPTS=0`.
+2026-01-12 23:08:25.897470: E external/local_xla/xla/stream_executor/cuda/cuda_fft.cc:467] Unable to register cuFFT factory: Attempting to register factory for plugin cuFFT when one has already been registered
+WARNING: All log messages before absl::InitializeLog() is called are written to STDERR
+E0000 00:00:1768259305.914516   25371 cuda_dnn.cc:8579] Unable to register cuDNN factory: Attempting to register factory for plugin cuDNN when one has already been registered
+E0000 00:00:1768259305.920044   25371 cuda_blas.cc:1407] Unable to register cuBLAS factory: Attempting to register factory for plugin cuBLAS when one has already been registered
+W0000 00:00:1768259305.933305   25371 computation_placer.cc:177] computation placer already registered. Please check linkage and avoid linking the same target more than once.
+W0000 00:00:1768259305.933329   25371 computation_placer.cc:177] computation placer already registered. Please check linkage and avoid linking the same target more than once.
+W0000 00:00:1768259305.933332   25371 computation_placer.cc:177] computation placer already registered. Please check linkage and avoid linking the same target more than once.
+W0000 00:00:1768259305.933333   25371 computation_placer.cc:177] computation placer already registered. Please check linkage and avoid linking the same target more than once.
+2026-01-12 23:08:25.937129: I tensorflow/core/platform/cpu_feature_guard.cc:210] This TensorFlow binary is optimized to use available CPU instructions in performance-critical operations.
+To enable the following instructions: AVX512F AVX512_VNNI AVX512_BF16 AVX512_FP16 AVX_VNNI, in other operations, rebuild TensorFlow with the appropriate compiler flags.
+/usr/lib/python3.10/runpy.py:126: RuntimeWarning: 'evaluation.experiments.monte_carlo' found in sys.modules after import of package 'evaluation.experiments', but prior to execution of 'evaluation.experiments.monte_carlo'; this may result in unpredictable behaviour
+  warn(RuntimeWarning(msg))
+Loading model: llama-3.1-8b
+`torch_dtype` is deprecated! Use `dtype` instead!
+Loading checkpoint shards:   0%|          | 0/4 [00:00<?, ?it/s]Loading checkpoint shards:  25%|██▌       | 1/4 [00:00<00:02,  1.30it/s]Loading checkpoint shards:  50%|█████     | 2/4 [00:01<00:01,  1.30it/s]Loading checkpoint shards:  75%|███████▌  | 3/4 [00:02<00:00,  1.31it/s]Loading checkpoint shards: 100%|██████████| 4/4 [00:02<00:00,  1.89it/s]Loading checkpoint shards: 100%|██████████| 4/4 [00:02<00:00,  1.62it/s]
+Monte Carlo BER Sweep
+============================================================
+Model: llama-3.1-8b
+Cache modes: ['int4', 'int4-hamming84', 'int4-hamming84-interp']
+BER levels: [0.0, 0.0001, 0.001, 0.01]
+Seeds: [42, 101, 997] (3 trials/config)
+Samples: 3
+KL Divergence: enabled
+Top-5 Accuracy: enabled
+Catastrophic Rate: enabled
+
+Generating clean baseline logits for KL divergence...
+  Generated 3 clean logits
+
+  [  0.0%] int4 @ BER=0e+00 seed=42
+  [  2.8%] int4 @ BER=0e+00 seed=101
+  [  5.6%] int4 @ BER=0e+00 seed=997
+  [  8.3%] int4 @ BER=1e-04 seed=42
+  [ 11.1%] int4 @ BER=1e-04 seed=101
+  [ 13.9%] int4 @ BER=1e-04 seed=997
+  [ 16.7%] int4 @ BER=1e-03 seed=42
+  [ 19.4%] int4 @ BER=1e-03 seed=101
+  [ 22.2%] int4 @ BER=1e-03 seed=997
+  [ 25.0%] int4 @ BER=1e-02 seed=42
+  [ 27.8%] int4 @ BER=1e-02 seed=101
+  [ 30.6%] int4 @ BER=1e-02 seed=997
+  [ 33.3%] int4-hamming84 @ BER=0e+00 seed=42
+  [ 36.1%] int4-hamming84 @ BER=0e+00 seed=101
+  [ 38.9%] int4-hamming84 @ BER=0e+00 seed=997
+  [ 41.7%] int4-hamming84 @ BER=1e-04 seed=42
+  [ 44.4%] int4-hamming84 @ BER=1e-04 seed=101
+  [ 47.2%] int4-hamming84 @ BER=1e-04 seed=997
+  [ 50.0%] int4-hamming84 @ BER=1e-03 seed=42
+  [ 52.8%] int4-hamming84 @ BER=1e-03 seed=101
+  [ 55.6%] int4-hamming84 @ BER=1e-03 seed=997
+  [ 58.3%] int4-hamming84 @ BER=1e-02 seed=42
+  [ 61.1%] int4-hamming84 @ BER=1e-02 seed=101
+  [ 63.9%] int4-hamming84 @ BER=1e-02 seed=997
+  [ 66.7%] int4-hamming84-interp @ BER=0e+00 seed=42
+  [ 69.4%] int4-hamming84-interp @ BER=0e+00 seed=101
+  [ 72.2%] int4-hamming84-interp @ BER=0e+00 seed=997
+  [ 75.0%] int4-hamming84-interp @ BER=1e-04 seed=42
+  [ 77.8%] int4-hamming84-interp @ BER=1e-04 seed=101
+  [ 80.6%] int4-hamming84-interp @ BER=1e-04 seed=997
+  [ 83.3%] int4-hamming84-interp @ BER=1e-03 seed=42
+  [ 86.1%] int4-hamming84-interp @ BER=1e-03 seed=101
+  [ 88.9%] int4-hamming84-interp @ BER=1e-03 seed=997
+  [ 91.7%] int4-hamming84-interp @ BER=1e-02 seed=42
+  [ 94.4%] int4-hamming84-interp @ BER=1e-02 seed=101
+  [ 97.2%] int4-hamming84-interp @ BER=1e-02 seed=997
+
+Sweep complete!
+
+Results saved to:
+  - results/llama8b_sweep/monte_carlo_results.json
+  - results/llama8b_sweep/results_table.txt
+  - results/llama8b_sweep/results_table.tex
+
+PERPLEXITY (lower is better)
+--------------------------------------------------------------------------------
+BER   | INT4 (Unprotected) | Hamming(8,4) | H(8,4)+Interp
+---------------------------------------------------------
+0     | 1.44               | 1.44         | 1.44         
+1e-04 | 1.46+/-0.01        | 1.44         | 1.44         
+1e-03 | 1.61+/-0.01        | 1.44         | 1.44         
+1e-02 | 75.72+/-21.19      | 1.85+/-0.04  | 1.46         
+
+KL DIVERGENCE (nats, lower is better - 0 = identical to clean)
+--------------------------------------------------------------------------------
+BER   | INT4 (Unprotected) | Hamming(8,4)    | H(8,4)+Interp  
+--------------------------------------------------------------
+0     | 0.0127             | 0.0127          | 0.0127         
+1e-04 | 0.0158+/-0.0003    | 0.0128          | 0.0127         
+1e-03 | 0.0907+/-0.0044    | 0.0145+/-0.0008 | 0.0144+/-0.0008
+1e-02 | 3.4123+/-0.4062    | 0.3141+/-0.0693 | 0.0288+/-0.0051
+
+TOP-5 ACCURACY % (higher is better - 100% = target always in top 5)
+--------------------------------------------------------------------------------
+BER   | INT4 (Unprotected) | Hamming(8,4) | H(8,4)+Interp
+---------------------------------------------------------
+0     | 98.2%              | 98.2%        | 98.2%        
+1e-04 | 97.9+/-0.4%        | 98.2%        | 98.2%        
+1e-03 | 97.4+/-0.3%        | 98.0+/-0.1%  | 98.2%        
+1e-02 | 62.3+/-3.7%        | 96.8+/-0.6%  | 98.0+/-0.1%  
+
+ERROR CORRECTION STATISTICS
+--------------------------------------------------------------------------------
+BER   | INT4 (Unprotected) | Hamming(8,4)        | H(8,4)+Interp      
+----------------------------------------------------------------------
+0     | -                  | -                   | -                  
+1e-04 | -                  | 68,837 / 34         | 68,837 / 34        
+1e-03 | -                  | 682,388 / 2,756     | 682,388 / 2,756    
+1e-02 | -                  | 6,399,340 / 258,032 | 6,399,340 / 258,032
+
+Note: Format is 'corrected / detected' for SECDED modes

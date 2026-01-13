@@ -273,3 +273,142 @@ def compute_per_sample_perplexity(model, tokenizer, texts, max_length=512, strid
                 perplexities.append(float("inf"))
 
     return perplexities
+
+
+def compute_batched_perplexity(
+    model, tokenizer, texts, batch_size=4, max_length=512, stride=256, device=None
+):
+    """
+    Compute perplexity with batched forward passes for ~2x speedup.
+
+    Args:
+        model: The language model
+        tokenizer: The tokenizer
+        texts: List of text samples
+        batch_size: Number of samples to process together
+        max_length: Maximum sequence length per sample
+        stride: Stride for sliding window
+        device: Device to run on
+
+    Returns:
+        Aggregate perplexity across all texts
+    """
+    model.eval()
+
+    if device is None:
+        device = next(model.parameters()).device
+
+    # Tokenize all texts first
+    all_encodings = []
+    for text in texts:
+        if not text.strip():
+            continue
+        encodings = tokenizer(
+            text, return_tensors="pt", truncation=True, max_length=max_length
+        )
+        all_encodings.append(encodings.input_ids[0])
+
+    if not all_encodings:
+        return float("inf")
+
+    total_loss = 0.0
+    total_tokens = 0
+
+    with torch.no_grad():
+        # Process in batches
+        for i in range(0, len(all_encodings), batch_size):
+            batch_ids = all_encodings[i : i + batch_size]
+
+            # Pad to same length
+            max_len = max(ids.size(0) for ids in batch_ids)
+            padded_batch = []
+            attention_masks = []
+
+            for ids in batch_ids:
+                pad_len = max_len - ids.size(0)
+                if pad_len > 0:
+                    pad_id = tokenizer.pad_token_id or tokenizer.eos_token_id
+                    padded = torch.cat(
+                        [ids, torch.full((pad_len,), pad_id, dtype=ids.dtype)]
+                    )
+                    mask = torch.cat(
+                        [torch.ones(ids.size(0)), torch.zeros(pad_len)]
+                    )
+                else:
+                    padded = ids
+                    mask = torch.ones(ids.size(0))
+
+                padded_batch.append(padded)
+                attention_masks.append(mask)
+
+            input_ids = torch.stack(padded_batch).to(device)
+            attention_mask = torch.stack(attention_masks).to(device)
+
+            # Create labels (shift is handled internally)
+            labels = input_ids.clone()
+            labels[attention_mask == 0] = -100  # Ignore padding
+
+            try:
+                outputs = model(
+                    input_ids,
+                    attention_mask=attention_mask,
+                    labels=labels,
+                    use_cache=False,
+                )
+
+                # Compute per-token loss manually for accurate counting
+                logits = outputs.logits[:, :-1, :].contiguous()
+                targets = labels[:, 1:].contiguous()
+
+                loss_fct = torch.nn.CrossEntropyLoss(reduction="none")
+                per_token_loss = loss_fct(
+                    logits.view(-1, logits.size(-1)), targets.view(-1)
+                )
+                per_token_loss = per_token_loss.view(targets.size())
+
+                # Sum only non-padding tokens
+                valid_mask = targets != -100
+                batch_loss = (per_token_loss * valid_mask).sum().item()
+                batch_tokens = valid_mask.sum().item()
+
+                total_loss += batch_loss
+                total_tokens += batch_tokens
+
+            except Exception:
+                # Fall back to sequential processing for this batch
+                for ids in batch_ids:
+                    try:
+                        ids = ids.unsqueeze(0).to(device)
+                        outputs = model(ids, labels=ids, use_cache=False)
+                        loss = outputs.loss
+                        if not torch.isnan(loss) and not torch.isinf(loss):
+                            total_loss += loss.item() * (ids.size(1) - 1)
+                            total_tokens += ids.size(1) - 1
+                    except Exception:
+                        continue
+
+    if total_tokens == 0:
+        return float("inf")
+
+    return math.exp(total_loss / total_tokens)
+
+
+def precompute_clean_logits_cache(model, tokenizer, texts, max_length=256, device=None):
+    """
+    Precompute clean logits for all texts once.
+
+    This is useful when computing KL divergence across multiple BER levels -
+    the clean (baseline) logits only need to be computed once.
+
+    Args:
+        model: The language model
+        tokenizer: The tokenizer
+        texts: List of text samples
+        max_length: Maximum sequence length
+        device: Device to run on
+
+    Returns:
+        List of clean logits tensors (on CPU to save GPU memory)
+    """
+    print("Precomputing clean logits for KL divergence baseline...")
+    return generate_clean_logits(model, tokenizer, texts, max_length, device)

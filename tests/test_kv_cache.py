@@ -125,15 +125,6 @@ class TestMemoryLayout:
         assert slot_mapping[16, 0].item() == 1
         assert slot_mapping[16, 1].item() == 0
 
-    def test_get_codec_for_block(self):
-        from kv_cache.memory_layout import get_codec_for_block
-
-        for i in range(4):
-            assert get_codec_for_block(i, sink_blocks=4) == "golay"
-
-        for i in range(4, 10):
-            assert get_codec_for_block(i, sink_blocks=4) == "hamming84"
-
 
 class TestCacheWrite:
     def test_compute_quantization_scales(self):

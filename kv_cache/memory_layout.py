@@ -11,9 +11,6 @@ class ECCCacheConfig:
         block_size=16,
         num_blocks=256,
         codec="hamming84",
-        sink_blocks=8,
-        sink_codec="golay",
-        context_codec="hamming84",
     ):
         self.num_heads = num_heads
         self.head_size = head_size
@@ -21,9 +18,6 @@ class ECCCacheConfig:
         self.block_size = block_size
         self.num_blocks = num_blocks
         self.codec = codec
-        self.sink_blocks = sink_blocks
-        self.sink_codec = sink_codec
-        self.context_codec = context_codec
 
     @property
     def dtype(self):
@@ -117,12 +111,6 @@ def compute_slot_mapping(seq_len, block_size, block_table, batch_idx):
     return slot_mapping
 
 
-def get_codec_for_block(block_idx, sink_blocks, sink_codec="golay", context_codec="hamming84"):
-    if block_idx < sink_blocks:
-        return sink_codec
-    return context_codec
-
-
 def verify_memory_layout():
     print("Memory Layout Verification")
     print("=" * 60)
@@ -170,11 +158,6 @@ def verify_memory_layout():
     )
     print(f"\nSlot mapping for 100 tokens: {slot_mapping.shape}")
     print(f"  First 5 slots: {slot_mapping[:5].tolist()}")
-
-    print("\nAdaptive UEP codec assignment:")
-    for block_idx in range(10):
-        codec = get_codec_for_block(block_idx, sink_blocks=4)
-        print(f"  Block {block_idx}: {codec}")
 
     print("\nMemory layout verification passed!")
     return True

@@ -1,3 +1,47 @@
+"""
+Evaluation Metrics for ECC-Protected KV Cache Quality Assessment.
+
+This module implements the metrics used to evaluate cache quality under bit
+error corruption. Metrics are chosen to capture different aspects of model
+degradation.
+
+Metrics:
+    Perplexity (PPL):
+        Measures language model quality. PPL = exp(cross-entropy loss).
+        Lower is better. Increase from baseline indicates cache corruption impact.
+        Uses sliding window with stride for long sequences.
+
+    KL Divergence:
+        Measures distribution shift from clean to corrupted outputs.
+        KL(clean || corrupted) in nats. Lower is better (0 = identical).
+        Computed per-position and averaged over sequence.
+
+    Top-5 Accuracy:
+        Fraction of positions where true next token is in model's top-5 predictions.
+        Higher is better. Measures prediction confidence degradation.
+
+    Catastrophic Failure Rate:
+        Fraction of samples with PPL > threshold (default 1000) or inf.
+        Captures complete model breakdown rather than gradual degradation.
+
+Implementation Notes:
+    - Sliding window perplexity avoids memory issues on long sequences
+    - Labels masked with -100 for positions already seen in previous windows
+    - NaN/inf losses are skipped (numerical instability)
+    - Batched perplexity available for ~2x speedup on large evaluations
+
+Usage:
+    # Aggregate perplexity
+    ppl = compute_perplexity(model, tokenizer, texts)
+
+    # Per-sample for catastrophic rate
+    sample_ppls = compute_per_sample_perplexity(model, tokenizer, texts)
+    cat_rate = compute_catastrophic_rate(sample_ppls, threshold=1000)
+
+    # KL divergence from clean baseline
+    clean_logits = generate_clean_logits(model, tokenizer, texts)
+    kl = compute_mean_kl_divergence(model, tokenizer, texts, clean_logits)
+"""
 import math
 import torch
 import torch.nn.functional as F

@@ -15,6 +15,14 @@ from ..constants import (
     get_ber_levels,
     get_seeds,
 )
+from ..latex_tables import (
+    format_latex_table,
+    format_storage_overhead_latex_table,
+    format_throughput_latex_table,
+    format_correction_rate_latex_table,
+    format_error_stats_latex_table,
+    format_all_latex_tables,
+)
 from ..metrics import load_wikitext2_test
 from ..models import load_model
 from ..sweep import SweepConfig, run_sweep, SweepResults
@@ -306,205 +314,6 @@ def format_results_table(results, include_std=True, include_advanced_metrics=Tru
     return "\n".join(lines)
 
 
-def format_latex_table(
-    results,
-    caption="Perplexity vs BER across protection strategies",
-    include_advanced_metrics=True,
-):
-    modes = list(results.aggregated.keys())
-    ber_levels = sorted(
-        set(
-            ber
-            for mode_results in results.aggregated.values()
-            for ber in mode_results.keys()
-        )
-    )
-
-    latex_labels = {
-        "fp16": "FP16",
-        "int4": "INT4",
-        "int4-hamming": "Hamming(7,4)",
-        "int4-hamming84": "Hamming(8,4)",
-        "int4-hamming84-interp": "H(8,4)+Interp",
-        "int12-golay": "Golay(24,12)",
-    }
-
-    def build_latex_table(title, get_mean, get_std, format_val, threshold=0.001):
-        table_lines = [
-            "",
-            r"\begin{table}[h]",
-            r"\centering",
-            r"\caption{" + title + r"}",
-            r"\begin{tabular}{l" + "c" * len(modes) + "}",
-            r"\toprule",
-            r"BER & " + " & ".join(latex_labels.get(m, m) for m in modes) + r" \\",
-            r"\midrule",
-        ]
-
-        for ber in ber_levels:
-            ber_str = f"${ber:.0e}$" if ber > 0 else "0"
-            values = []
-            for mode in modes:
-                if ber in results.aggregated.get(mode, {}):
-                    agg = results.aggregated[mode][ber]
-                    mean_val = get_mean(agg)
-                    std_val = get_std(agg)
-                    if std_val > threshold:
-                        values.append(format_val(mean_val, std_val))
-                    else:
-                        values.append(format_val(mean_val, None))
-                else:
-                    values.append("-")
-            table_lines.append(ber_str + " & " + " & ".join(values) + r" \\")
-
-        table_lines.extend(
-            [
-                r"\bottomrule",
-                r"\end{tabular}",
-                r"\end{table}",
-            ]
-        )
-        return table_lines
-
-    lines = [
-        r"\begin{table}[h]",
-        r"\centering",
-        r"\caption{" + caption + r"}",
-        r"\begin{tabular}{l" + "c" * len(modes) + "}",
-        r"\toprule",
-        r"BER & " + " & ".join(latex_labels.get(m, m) for m in modes) + r" \\",
-        r"\midrule",
-    ]
-
-    for ber in ber_levels:
-        ber_str = f"${ber:.0e}$" if ber > 0 else "0"
-        values = []
-        for mode in modes:
-            if ber in results.aggregated.get(mode, {}):
-                agg = results.aggregated[mode][ber]
-                if agg.ppl_std > 0.01:
-                    values.append(f"${agg.ppl_mean:.2f} \\pm {agg.ppl_std:.2f}$")
-                else:
-                    values.append(f"${agg.ppl_mean:.2f}$")
-            else:
-                values.append("-")
-        lines.append(ber_str + " & " + " & ".join(values) + r" \\")
-
-    lines.extend(
-        [
-            r"\bottomrule",
-            r"\end{tabular}",
-            r"\end{table}",
-        ]
-    )
-
-    if include_advanced_metrics:
-        has_kl = any(
-            results.aggregated.get(mode, {}).get(ber, None) is not None
-            and results.aggregated[mode][ber].kl_divergence_mean > 0
-            for mode in modes
-            for ber in ber_levels
-        )
-
-        if has_kl:
-            lines.extend(
-                build_latex_table(
-                    r"KL Divergence (nats) vs BER across protection strategies",
-                    lambda agg: agg.kl_divergence_mean,
-                    lambda agg: agg.kl_divergence_std,
-                    lambda m, s: f"${m:.4f} \\pm {s:.4f}$" if s else f"${m:.4f}$",
-                    threshold=0.0001,
-                )
-            )
-
-        has_top5 = any(
-            results.aggregated.get(mode, {}).get(ber, None) is not None
-            and results.aggregated[mode][ber].top5_accuracy_mean < 1.0
-            for mode in modes
-            for ber in ber_levels
-        )
-
-        if has_top5:
-            lines.extend(
-                build_latex_table(
-                    r"Top-5 Accuracy (\%) vs BER across protection strategies",
-                    lambda agg: agg.top5_accuracy_mean * 100,
-                    lambda agg: agg.top5_accuracy_std * 100,
-                    lambda m, s: f"${m:.1f} \\pm {s:.1f}$" if s else f"${m:.1f}$",
-                    threshold=0.1,
-                )
-            )
-
-        has_cat = any(
-            results.aggregated.get(mode, {}).get(ber, None) is not None
-            and results.aggregated[mode][ber].catastrophic_rate_mean > 0
-            for mode in modes
-            for ber in ber_levels
-        )
-
-        if has_cat:
-            lines.extend(
-                build_latex_table(
-                    r"Catastrophic Failure Rate (\%) vs BER across protection strategies",
-                    lambda agg: agg.catastrophic_rate_mean * 100,
-                    lambda agg: agg.catastrophic_rate_std * 100,
-                    lambda m, s: f"${m:.1f} \\pm {s:.1f}$" if s else f"${m:.1f}$",
-                    threshold=0.1,
-                )
-            )
-
-        has_errors = any(
-            results.aggregated.get(mode, {}).get(ber, None) is not None
-            and results.aggregated[mode][ber].errors_corrected_mean > 0
-            for mode in modes
-            for ber in ber_levels
-        )
-
-        if has_errors:
-            lines.extend(
-                [
-                    "",
-                    r"\begin{table}[h]",
-                    r"\centering",
-                    r"\caption{Error Correction Statistics vs BER}",
-                    r"\begin{tabular}{l" + "c" * len(modes) + "}",
-                    r"\toprule",
-                    r"BER & "
-                    + " & ".join(latex_labels.get(m, m) for m in modes)
-                    + r" \\",
-                    r"\midrule",
-                ]
-            )
-
-            for ber in ber_levels:
-                ber_str = f"${ber:.0e}$" if ber > 0 else "0"
-                values = []
-                for mode in modes:
-                    if ber in results.aggregated.get(mode, {}):
-                        agg = results.aggregated[mode][ber]
-                        corr = int(agg.errors_corrected_mean)
-                        det = int(agg.errors_detected_mean)
-                        if det > 0:
-                            values.append(f"{corr:,} / {det:,}")
-                        elif corr > 0:
-                            values.append(f"{corr:,}")
-                        else:
-                            values.append("-")
-                    else:
-                        values.append("-")
-                lines.append(ber_str + " & " + " & ".join(values) + r" \\")
-
-            lines.extend(
-                [
-                    r"\bottomrule",
-                    r"\end{tabular}",
-                    r"\end{table}",
-                ]
-            )
-
-    return "\n".join(lines)
-
-
 def save_results(results, config, output_dir):
     output_path = Path(output_dir)
     output_path.mkdir(parents=True, exist_ok=True)
@@ -516,12 +325,16 @@ def save_results(results, config, output_dir):
             json_results[mode][str(ber)] = {
                 "ppl_mean": agg.ppl_mean,
                 "ppl_std": agg.ppl_std,
+                "ppl_ci95": agg.ppl_ci95,
                 "kl_divergence_mean": agg.kl_divergence_mean,
                 "kl_divergence_std": agg.kl_divergence_std,
+                "kl_divergence_ci95": agg.kl_divergence_ci95,
                 "top5_accuracy_mean": agg.top5_accuracy_mean,
                 "top5_accuracy_std": agg.top5_accuracy_std,
+                "top5_accuracy_ci95": agg.top5_accuracy_ci95,
                 "catastrophic_rate_mean": agg.catastrophic_rate_mean,
                 "catastrophic_rate_std": agg.catastrophic_rate_std,
+                "catastrophic_rate_ci95": agg.catastrophic_rate_ci95,
                 "errors_corrected_mean": agg.errors_corrected_mean,
                 "errors_detected_mean": agg.errors_detected_mean,
                 "n_trials": agg.n_trials,
@@ -542,14 +355,44 @@ def save_results(results, config, output_dir):
     with open(ascii_path, "w") as f:
         f.write(format_results_table(results))
 
+    # Single-table LaTeX (legacy format)
     latex_path = output_path / "results_table.tex"
     with open(latex_path, "w") as f:
         f.write(format_latex_table(results))
+
+    # All tables combined for paper
+    all_tables_path = output_path / "paper_tables.tex"
+    with open(all_tables_path, "w") as f:
+        f.write(format_all_latex_tables(results))
+
+    # Individual table files for modular inclusion
+    tables_dir = output_path / "tables"
+    tables_dir.mkdir(exist_ok=True)
+
+    # Table 1: Perplexity
+    with open(tables_dir / "perplexity.tex", "w") as f:
+        f.write(format_latex_table(results, include_advanced_metrics=False))
+
+    # Table 2: Storage Overhead
+    with open(tables_dir / "storage_overhead.tex", "w") as f:
+        f.write(format_storage_overhead_latex_table())
+
+    # Table 3: Correction Rates
+    corr_table = format_correction_rate_latex_table(results)
+    if corr_table:
+        with open(tables_dir / "correction_rates.tex", "w") as f:
+            f.write(corr_table)
+
+    # Table 4: Throughput (placeholder - needs latency_results)
+    with open(tables_dir / "throughput.tex", "w") as f:
+        f.write(format_throughput_latex_table(None))
 
     print(f"\nResults saved to:")
     print(f"  - {json_path}")
     print(f"  - {ascii_path}")
     print(f"  - {latex_path}")
+    print(f"  - {all_tables_path}")
+    print(f"  - {tables_dir}/ (individual tables)")
 
 
 def main():

@@ -1,3 +1,37 @@
+"""
+ECC-Protected KV Cache Shim: Pluggable error-correcting codes for transformer attention.
+
+This module implements a paged KV cache with pluggable ECC codecs (Hamming, Golay) for
+bit-error resilience during inference. It replaces the model's native attention with
+an ECC-protected version that quantizes K,V to INT4, applies ECC encoding, and optionally
+injects bit errors for BER sweep experiments.
+
+Architecture:
+    1. ECCShimConfig: Configuration for codec, BER, and interpolation settings
+    2. SimpleBlockManager: Paged memory manager for K,V cache blocks
+    3. ECCBackend: Core encode/decode logic with fault injection
+    4. ECCPagedAttentionShim: Drop-in replacement for model attention layers
+    5. patch_model_with_ecc_attention: Context manager to wrap any HuggingFace model
+
+Supported Codecs:
+    - fp16: Unprotected FP16 oracle baseline
+    - fp8: Unprotected FP8 E4M3 (vLLM standard)
+    - int4: Unprotected INT4 (BER injection without ECC)
+    - hamming74: Hamming(7,4) SEC (single error correct)
+    - hamming84: Hamming(8,4) SECDED (single error correct, double error detect)
+    - golay: Golay(24,12) (corrects up to 3 errors per 24-bit codeword)
+
+Fault Injection Strategy:
+    seed_used = config.seed + _injection_count
+    where _injection_count increments per (K, V) write operation.
+    Determinism guarantee: Fixed (config.seed, write_order) → identical bit flips.
+
+Usage:
+    config = ECCShimConfig(codec="hamming84", ber=1e-4, inject_errors=True)
+    with patch_model_with_ecc_attention(model, config) as patched_model:
+        outputs = patched_model.generate(...)
+"""
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -18,6 +52,32 @@ from ecc_codecs.triton_kernels import (
 from kv_cache.attention_ecc import paged_attention_ecc
 
 from transformers.models.llama.modeling_llama import LlamaRotaryEmbedding
+
+
+def compute_injection_seed(base_seed: int, layer_idx: int, injection_count: int) -> int:
+    """
+    Compute deterministic seed for fault injection.
+
+    Formula: base_seed + layer_idx * 10000 + injection_count
+
+    This ensures:
+    - Different layers get different random sequences
+    - Different injection operations get different sequences
+    - Reproducibility: same (base_seed, layer_idx, injection_count) → same result
+
+    Supports:
+    - Up to 10000 injections per layer before potential collision
+    - Up to 2^31 / 10000 ≈ 214000 layers
+
+    Args:
+        base_seed: Base seed from configuration
+        layer_idx: Layer index (0-based)
+        injection_count: Number of injections so far for this component
+
+    Returns:
+        Deterministic seed for RNG
+    """
+    return base_seed + layer_idx * 10000 + injection_count
 
 
 class ECCDummyCache:
@@ -72,20 +132,53 @@ class ECCDummyCache:
 
 
 class ECCShimConfig:
+    """
+    Configuration for ECC-protected KV cache.
+
+    Controls codec selection, error injection, and recovery strategies for
+    BER sweep experiments.
+
+    Attributes:
+        codec: ECC codec name. Options:
+            - "fp16": Unprotected FP16 baseline (oracle)
+            - "fp8": Unprotected FP8 E4M3 (vLLM standard)
+            - "int4": Unprotected INT4 (for BER comparison without ECC)
+            - "hamming74": Hamming(7,4) SEC - corrects 1 error
+            - "hamming84": Hamming(8,4) SECDED - corrects 1, detects 2
+            - "golay": Golay(24,12) - corrects up to 3 errors
+        ber: Bit Error Rate for fault injection (0.0 = no errors)
+        block_size: Tokens per cache block (default 16)
+        num_blocks: Maximum number of cache blocks to allocate
+        inject_errors: If True, inject bit errors during cache writes
+        seed: Base RNG seed for deterministic fault injection
+        use_interpolation: If True, apply linear interpolation for double errors
+
+    Seed Strategy:
+        actual_seed = seed + injection_count
+        This ensures different K,V pairs get different random bit flips while
+        remaining deterministic across runs with the same seed.
+    """
+
+    # Supported codecs for ECC protection
+    SUPPORTED_CODECS = {"fp16", "fp8", "int4", "hamming74", "hamming84", "golay"}
+
     def __init__(
         self,
         codec="hamming84",
         ber=0.0,
-        sink_blocks=4,
         block_size=16,
         num_blocks=256,
         inject_errors=False,
         seed=42,
         use_interpolation=False,
     ):
+        if codec not in self.SUPPORTED_CODECS:
+            raise ValueError(
+                f"Unsupported codec: '{codec}'. "
+                f"Supported codecs: {sorted(self.SUPPORTED_CODECS)}"
+            )
         self.codec = codec
         self.ber = ber
-        self.sink_blocks = sink_blocks
         self.block_size = block_size
         self.num_blocks = num_blocks
         self.inject_errors = inject_errors
@@ -94,6 +187,38 @@ class ECCShimConfig:
 
 
 class SimpleBlockManager:
+    """
+    Paged memory manager for ECC-protected KV cache.
+
+    Manages block allocation and provides storage tensors for K,V cache with
+    codec-appropriate layouts. Each block stores `block_size` tokens worth of
+    K or V data for all layers and KV heads.
+
+    Memory Layout:
+        k_cache, v_cache: [num_blocks, num_layers, num_kv_heads, codewords_per_head]
+            - codewords_per_head = block_size * head_dim for per-element codecs
+            - codewords_per_head = block_size * (head_dim/3) for Golay (triplet packing)
+        k_scales, v_scales: [num_blocks, num_layers, num_kv_heads, block_size]
+            - Per-token quantization scale factors
+
+    Block Table:
+        Maps (sequence_id, logical_block_idx) → physical_block_idx
+        Allows non-contiguous allocation for dynamic sequence lengths.
+
+    Supported Codecs and Their Storage:
+        - fp16: torch.float16, no scales needed
+        - fp8: torch.float8_e4m3fn, no scales needed
+        - int4/hamming74/hamming84: torch.uint8, scales required
+        - golay: torch.int32 (24-bit codewords), scales required
+
+    Attributes:
+        k_cache, v_cache: Main KV storage tensors
+        k_scales, v_scales: Quantization scales (only for quantized codecs)
+        block_table: [max_seqs, max_blocks_per_seq] mapping logical → physical
+        free_blocks: List of unallocated block indices
+        seq_to_blocks: Dict mapping sequence_id → list of physical blocks
+    """
+
     def __init__(
         self,
         num_blocks,
@@ -115,6 +240,10 @@ class SimpleBlockManager:
         if codec == "fp16":
             self.values_per_head = block_size * head_dim
             self.cache_dtype = torch.float16
+            self.needs_scales = False
+        elif codec == "fp8":
+            self.values_per_head = block_size * head_dim
+            self.cache_dtype = torch.float8_e4m3fn
             self.needs_scales = False
         elif codec == "int4":
             self.values_per_head = block_size * head_dim
@@ -173,44 +302,6 @@ class SimpleBlockManager:
             device=device,
         )
 
-        if codec == "adaptive":
-            golay_codewords = block_size * ((head_dim + 2) // 3)
-            self.sink_k_cache = torch.zeros(
-                num_blocks,
-                num_layers,
-                num_kv_heads,
-                golay_codewords,
-                dtype=torch.int32,
-                device=device,
-            )
-            self.sink_v_cache = torch.zeros(
-                num_blocks,
-                num_layers,
-                num_kv_heads,
-                golay_codewords,
-                dtype=torch.int32,
-                device=device,
-            )
-            self.sink_k_scales = torch.zeros(
-                num_blocks,
-                num_layers,
-                num_kv_heads,
-                block_size,
-                dtype=torch.float32,
-                device=device,
-            )
-            self.sink_v_scales = torch.zeros(
-                num_blocks,
-                num_layers,
-                num_kv_heads,
-                block_size,
-                dtype=torch.float32,
-                device=device,
-            )
-        else:
-            self.sink_k_cache = None
-            self.sink_v_cache = None
-
         self.free_blocks = list(range(num_blocks))
         self.seq_to_blocks = {}
         self.seq_to_len = {}
@@ -268,12 +359,67 @@ class SimpleBlockManager:
         self.k_scales.zero_()
         self.v_scales.zero_()
 
-        if self.sink_k_cache is not None:
-            self.sink_k_cache.zero_()
-            self.sink_v_cache.zero_()
-
 
 class ECCBackend:
+    """
+    Core ECC encode/decode engine with fault injection support.
+
+    Implements the write() and attend() operations that bridge the model's
+    attention mechanism with the ECC-protected cache. Handles:
+        - Quantization: FP16 → INT4 with per-position scale factors
+        - ECC Encoding: INT4 → Hamming84/Golay codewords
+        - Fault Injection: Bernoulli bit flips at specified BER
+        - ECC Decoding: Codewords → INT4 with error correction
+        - Dequantization: INT4 → FP16 for attention computation
+
+    Error Statistics:
+        Tracks cumulative counts for analysis:
+        - _errors_corrected: Single-bit errors successfully corrected (SEC)
+        - _errors_detected: Double-bit errors detected but NOT corrected (DED)
+
+        Error Type Values (from ECC decode):
+            0 = NO_ERROR: No bit errors detected, original data valid
+            1 = SINGLE_CORRECTED: 1-bit error corrected, data now valid
+            2 = DOUBLE_DETECTED: 2-bit error detected, data CORRUPTED
+                SECDED cannot correct double errors. Caller must handle:
+                - Hamming84: Preserve corrupted data (default) or interpolate
+                - With interpolation: Replace with average of temporal neighbors
+            3 = UNCORRECTABLE: 3+ bit errors (Golay only), data is garbage
+
+        Note: Double errors (type 2) increment _errors_detected but the
+        returned data is still corrupted unless interpolation is enabled.
+
+    Determinism:
+        Fault injection uses seed = config.seed + _injection_count, where
+        _injection_count is a global counter that increments per (K, V) pair
+        written across all layers. This ensures:
+        - Same seed + same write order = identical bit flips
+        - Different K/V tensors get different random patterns
+        - Different layers get different patterns (via incremental count)
+
+        Note: FaultInjectionAttentionShim uses an alternative formula with
+        explicit layer_idx * 10000 multiplier for per-layer injection counts.
+        Both approaches are deterministic and valid for their use cases.
+
+    Path Selection:
+        - Triton kernel path: Used for seq_len=1 decode with hamming84
+        - Python path: Used for prefill (seq_len>1) or when interpolation needed
+
+    GQA Support:
+        Handles Grouped-Query Attention by expanding K,V heads via
+        repeat_interleave before attention computation.
+
+    Attributes:
+        manager: SimpleBlockManager providing cache storage
+        config: ECCShimConfig with codec and BER settings
+        num_heads: Number of query attention heads
+        num_kv_heads: Number of K,V attention heads (may differ for GQA)
+        num_kv_groups: num_heads // num_kv_heads (expansion factor for GQA)
+        _injection_count: Counter for deterministic fault injection
+        _errors_corrected: Cumulative single-bit errors corrected
+        _errors_detected: Cumulative double-bit errors detected
+    """
+
     def __init__(
         self,
         manager,
@@ -286,12 +432,28 @@ class ECCBackend:
         self.num_kv_heads = manager.num_kv_heads
         self.head_dim = manager.head_dim
 
+        # GQA: multiple query heads share each K,V head
         self.num_kv_groups = num_heads // self.num_kv_heads
 
+        # Fault injection counter for deterministic RNG
         self._injection_count = 0
 
+        # Error statistics for analysis
+        self._errors_corrected = 0  # Single-bit errors corrected
+        self._errors_detected = 0  # Double-bit errors detected (SECDED)
+        self._total_values = 0  # Total KV values processed
+
+    def reset_stats(self):
+        """Reset error statistics for a new text/trial.
+
+        Called by reset_ecc_cache() to ensure fresh statistics for each text.
+        Without this, error counts would leak across texts within a trial,
+        contaminating reported statistics.
+        """
+        self._injection_count = 0
         self._errors_corrected = 0
         self._errors_detected = 0
+        self._total_values = 0
 
     def write(
         self,
@@ -300,9 +462,42 @@ class ECCBackend:
         layer_idx,
         seq_id=0,
     ):
+        """
+        Quantize, encode, optionally corrupt, and store K,V tensors.
+
+        Pipeline for ECC-protected codecs:
+            1. Compute per-position quantization scales: scale = max(|x|) / 7
+            2. Quantize to INT4: int4_val = round(x / scale) + 8
+            3. Apply ECC encoding: INT4 → codeword (Hamming84 or Golay)
+            4. Inject bit errors if config.inject_errors and config.ber > 0
+            5. Store codewords and scales in block manager cache
+
+        For unprotected codecs (fp16, fp8, int4):
+            - fp16: Store directly, no quantization
+            - fp8: Convert to FP8 E4M3, optionally inject bit errors
+            - int4: Quantize without ECC, optionally inject bit errors
+
+        Args:
+            k: Key tensor [batch, seq_len, num_kv_heads * head_dim]
+            v: Value tensor [batch, seq_len, num_kv_heads * head_dim]
+            layer_idx: Which transformer layer (for cache indexing)
+            seq_id: Sequence identifier for block allocation
+
+        Side Effects:
+            - Allocates blocks via manager.allocate() if needed
+            - Increments _injection_count for each (K, V) pair (determinism)
+            - Updates manager.k_cache, v_cache, k_scales, v_scales
+
+        Fault Injection:
+            When enabled, uses seed = config.seed + _injection_count to generate
+            deterministic bit flips. Separate seeds for K (+0) and V (+1).
+        """
         batch_size, seq_len, hidden_kv = k.shape
         device = k.device
         head_dim = self.head_dim
+
+        # Track total values written (K and V, all positions, all heads)
+        self._total_values += 2 * batch_size * seq_len * self.num_kv_heads * head_dim
 
         current_len = self.manager.get_context_len(seq_id)
         if current_len < seq_len:
@@ -326,6 +521,43 @@ class ECCBackend:
                     for h in range(self.num_kv_heads):
                         k_vals = k_reshaped[b, pos, h]
                         v_vals = v_reshaped[b, pos, h]
+
+                        offset_start = slot_in_block * head_dim
+                        offset_end = offset_start + head_dim
+                        self.manager.k_cache[
+                            physical_block, layer_idx, h, offset_start:offset_end
+                        ] = k_vals
+                        self.manager.v_cache[
+                            physical_block, layer_idx, h, offset_start:offset_end
+                        ] = v_vals
+            return
+
+        if self.config.codec == "fp8":
+            for b in range(batch_size):
+                for pos in range(seq_len):
+                    logical_block = pos // self.manager.block_size
+                    slot_in_block = pos % self.manager.block_size
+                    physical_block = int(block_table[logical_block].item())
+
+                    if physical_block < 0:
+                        continue
+
+                    for h in range(self.num_kv_heads):
+                        # Convert FP16 to FP8 E4M3 format
+                        k_vals = k_reshaped[b, pos, h].to(torch.float8_e4m3fn)
+                        v_vals = v_reshaped[b, pos, h].to(torch.float8_e4m3fn)
+
+                        # Inject bit errors if enabled (on raw FP8 bytes)
+                        if self.config.inject_errors and self.config.ber > 0:
+                            seed = self.config.seed + self._injection_count
+                            self._injection_count += 1
+                            # FP8 is 8 bits per value
+                            k_vals = inject_bit_errors_triton(
+                                k_vals.view(torch.uint8), self.config.ber, 8, seed
+                            ).view(torch.float8_e4m3fn)
+                            v_vals = inject_bit_errors_triton(
+                                v_vals.view(torch.uint8), self.config.ber, 8, seed + 1
+                            ).view(torch.float8_e4m3fn)
 
                         offset_start = slot_in_block * head_dim
                         offset_end = offset_start + head_dim
@@ -388,8 +620,6 @@ class ECCBackend:
                         ] = v_scales[b, pos, h]
             return
 
-        use_adaptive = self.config.codec == "adaptive" and self.config.sink_blocks > 0
-
         golay_padded_dim = ((head_dim + 2) // 3) * 3
         golay_num_codewords = golay_padded_dim // 3
 
@@ -402,54 +632,11 @@ class ECCBackend:
                 if physical_block < 0:
                     continue
 
-                is_sink_block = use_adaptive and logical_block < self.config.sink_blocks
-
                 for h in range(self.num_kv_heads):
                     k_vals = k_int4[b, pos, h]
                     v_vals = v_int4[b, pos, h]
 
-                    if is_sink_block:
-                        k_padded = torch.zeros(
-                            golay_padded_dim, dtype=torch.uint8, device=device
-                        )
-                        v_padded = torch.zeros(
-                            golay_padded_dim, dtype=torch.uint8, device=device
-                        )
-                        k_padded[:head_dim] = k_vals
-                        v_padded[:head_dim] = v_vals
-
-                        k_triplets = k_padded.view(-1, 3)
-                        v_triplets = v_padded.view(-1, 3)
-
-                        k_encoded = golay_encode(k_triplets)
-                        v_encoded = golay_encode(v_triplets)
-
-                        if self.config.inject_errors and self.config.ber > 0:
-                            seed = self.config.seed + self._injection_count
-                            self._injection_count += 1
-                            k_encoded = inject_bit_errors_triton(
-                                k_encoded, self.config.ber, 24, seed
-                            )
-                            v_encoded = inject_bit_errors_triton(
-                                v_encoded, self.config.ber, 24, seed + 1
-                            )
-
-                        offset_start = slot_in_block * golay_num_codewords
-                        offset_end = offset_start + golay_num_codewords
-                        self.manager.sink_k_cache[
-                            physical_block, layer_idx, h, offset_start:offset_end
-                        ] = k_encoded
-                        self.manager.sink_v_cache[
-                            physical_block, layer_idx, h, offset_start:offset_end
-                        ] = v_encoded
-
-                        self.manager.sink_k_scales[
-                            physical_block, layer_idx, h, slot_in_block
-                        ] = k_scales[b, pos, h]
-                        self.manager.sink_v_scales[
-                            physical_block, layer_idx, h, slot_in_block
-                        ] = v_scales[b, pos, h]
-                    elif self.config.codec == "hamming74":
+                    if self.config.codec == "hamming74":
                         k_encoded = hamming74_encode(k_vals)
                         v_encoded = hamming74_encode(v_vals)
 
@@ -555,6 +742,40 @@ class ECCBackend:
         layer_idx,
         seq_id=0,
     ):
+        """
+        Decode cache, correct errors, dequantize, and compute attention.
+
+        Pipeline:
+            1. Load encoded codewords from cache blocks
+            2. Decode with ECC: codeword → INT4 + error correction
+            3. Dequantize: INT4 → FP16 using stored scales
+            4. (Optional) Interpolate double-error positions
+            5. Expand KV heads for GQA if needed
+            6. Compute scaled dot-product attention via PyTorch SDPA
+
+        Path Selection:
+            - Triton path: seq_len=1, hamming84, no interpolation
+              Uses fused decode+attention kernel for ~20x speedup
+            - Python path: All other cases (prefill, interpolation, Golay)
+              Decodes explicitly, then uses torch.nn.functional.scaled_dot_product_attention
+
+        Error Recovery:
+            - Hamming84 without interpolation: Single errors corrected, doubles preserved
+            - Hamming84 with interpolation: Double errors replaced by linear interpolation
+            - Golay: Up to 3 errors corrected, ≥4 errors preserved
+
+        Args:
+            q: Query tensor [batch, num_heads, seq_len, head_dim]
+            layer_idx: Which transformer layer
+            seq_id: Sequence identifier for block table lookup
+
+        Returns:
+            Output tensor [batch, num_heads, seq_len, head_dim]
+            Same shape as query, containing attention-weighted sum of values.
+
+        Side Effects:
+            - Updates _errors_corrected and _errors_detected counters
+        """
         batch_size, num_heads, seq_len, head_dim = q.shape
         device = q.device
 
@@ -612,6 +833,43 @@ class ECCBackend:
 
             return self._run_attention(q, k_float, v_float, device)
 
+        if self.config.codec == "fp8":
+            k_list = []
+            v_list = []
+
+            for blk_idx in range(num_ctx_blocks):
+                phys_block = int(block_table[blk_idx].item())
+                if phys_block < 0:
+                    continue
+
+                start_pos = blk_idx * self.manager.block_size
+                end_pos = min(start_pos + self.manager.block_size, context_len)
+
+                for slot in range(end_pos - start_pos):
+                    offset_start = slot * head_dim
+                    offset_end = offset_start + head_dim
+
+                    k_val = self.manager.k_cache[
+                        phys_block, layer_idx, :, offset_start:offset_end
+                    ]
+                    v_val = self.manager.v_cache[
+                        phys_block, layer_idx, :, offset_start:offset_end
+                    ]
+
+                    k_list.append(k_val)
+                    v_list.append(v_val)
+
+            if not k_list:
+                return torch.zeros_like(q)
+
+            # Convert FP8 back to FP16 for attention computation
+            k_fp8 = torch.stack(k_list, dim=0)
+            v_fp8 = torch.stack(v_list, dim=0)
+            k_float = k_fp8.to(torch.float16)
+            v_float = v_fp8.to(torch.float16)
+
+            return self._run_attention(q, k_float, v_float, device)
+
         if self.config.codec == "int4":
             k_list = []
             v_list = []
@@ -657,13 +915,6 @@ class ECCBackend:
 
             return self._run_attention(q, k_float, v_float, device)
 
-        use_adaptive = self.config.codec == "adaptive" and self.config.sink_blocks > 0
-
-        sink_tokens = (
-            self.config.sink_blocks * self.manager.block_size if use_adaptive else 0
-        )
-        sink_tokens = min(sink_tokens, context_len)
-
         golay_padded_dim = ((head_dim + 2) // 3) * 3
         golay_num_codewords = golay_padded_dim // 3
 
@@ -685,31 +936,12 @@ class ECCBackend:
             start_pos = blk_idx * self.manager.block_size
             end_pos = min(start_pos + self.manager.block_size, context_len)
 
-            is_sink_block = use_adaptive and blk_idx < self.config.sink_blocks
-
             is_standalone_golay = self.config.codec == "golay"
 
             for slot in range(end_pos - start_pos):
                 global_pos = start_pos + slot
 
-                if is_sink_block:
-                    offset_start = slot * golay_num_codewords
-                    offset_end = offset_start + golay_num_codewords
-
-                    k_enc = self.manager.sink_k_cache[
-                        phys_block, layer_idx, :, offset_start:offset_end
-                    ]
-                    v_enc = self.manager.sink_v_cache[
-                        phys_block, layer_idx, :, offset_start:offset_end
-                    ]
-                    k_scale = self.manager.sink_k_scales[phys_block, layer_idx, :, slot]
-                    v_scale = self.manager.sink_v_scales[phys_block, layer_idx, :, slot]
-
-                    sink_k_enc_list.append(k_enc)
-                    sink_v_enc_list.append(v_enc)
-                    sink_k_scale_list.append(k_scale)
-                    sink_v_scale_list.append(v_scale)
-                elif is_standalone_golay:
+                if is_standalone_golay:
                     offset_start = slot * golay_num_codewords
                     offset_end = offset_start + golay_num_codewords
 
@@ -802,7 +1034,7 @@ class ECCBackend:
                 ctx_v_dec, v_h74_stats = hamming74_decode(v_flat)
 
                 self._errors_corrected += k_h74_stats[0] + v_h74_stats[0]
-            elif self.config.use_interpolation or self.config.codec == "adaptive":
+            elif self.config.use_interpolation:
                 ctx_k_dec, k_error_types, k_h84_stats = hamming84_decode(
                     k_flat, return_error_types=True
                 )
@@ -813,8 +1045,18 @@ class ECCBackend:
                 self._errors_corrected += k_h84_stats[0] + v_h84_stats[0]
                 self._errors_detected += k_h84_stats[1] + v_h84_stats[1]
 
-                ctx_k_dec = interpolate_double_errors(ctx_k_dec, k_error_types)
-                ctx_v_dec = interpolate_double_errors(ctx_v_dec, v_error_types)
+                # Reshape for temporal interpolation along context length (not features)
+                # Shape: [ctx_len * heads * dim] -> [ctx_len, heads, dim]
+                # This ensures interpolation uses neighboring tokens, not adjacent features
+                ctx_k_dec = ctx_k_dec.view(ctx_len_actual, self.num_kv_heads, head_dim)
+                k_error_types = k_error_types.view(ctx_len_actual, self.num_kv_heads, head_dim)
+                ctx_v_dec = ctx_v_dec.view(ctx_len_actual, self.num_kv_heads, head_dim)
+                v_error_types = v_error_types.view(ctx_len_actual, self.num_kv_heads, head_dim)
+
+                # Interpolate along temporal dimension (seq_dim=0 = context length)
+                # Double errors at position t are replaced by average of t-1 and t+1
+                ctx_k_dec = interpolate_double_errors(ctx_k_dec, k_error_types, seq_dim=0)
+                ctx_v_dec = interpolate_double_errors(ctx_v_dec, v_error_types, seq_dim=0)
             else:
                 ctx_k_dec, k_h84_stats = hamming84_decode(k_flat)
                 ctx_v_dec, v_h84_stats = hamming84_decode(v_flat)
@@ -1370,8 +1612,16 @@ def _get_attention_params(attn_module):
 
 
 def reset_ecc_cache(model):
+    """Reset ECC cache state for a new text/trial.
+
+    Resets both the block manager (cache storage) and backend statistics
+    (error counts, injection counts). This ensures fresh state for each
+    text within a trial, preventing statistics from leaking across texts.
+    """
     if hasattr(model, "_ecc_block_manager"):
         model._ecc_block_manager.reset()
+    if hasattr(model, "_ecc_backend"):
+        model._ecc_backend.reset_stats()
 
 
 def get_ecc_stats(model):
@@ -1388,4 +1638,5 @@ def get_ecc_stats(model):
         stats["injection_count"] = backend._injection_count
         stats["errors_corrected"] = backend._errors_corrected
         stats["errors_detected"] = backend._errors_detected
+        stats["total_values"] = backend._total_values
     return stats

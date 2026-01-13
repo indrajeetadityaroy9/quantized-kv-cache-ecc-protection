@@ -1,3 +1,59 @@
+"""
+Double-Error Recovery via Linear Interpolation.
+
+This module implements a recovery strategy for SECDED codes when double-bit
+errors are detected but uncorrectable. Rather than returning corrupted data
+or zeroing the value, we use linear interpolation from neighboring values.
+
+Recovery Strategy:
+    When error_type[i] == DOUBLE_DETECTED:
+        recovered[i] = (data[i-1] + data[i+1]) / 2
+
+    Boundary handling:
+        - i == 0: uses (data[0] + data[1]) / 2 (clamps left index)
+        - i == N-1: uses (data[N-2] + data[N-1]) / 2 (clamps right index)
+
+Rationale:
+    For transformer KV cache values, adjacent positions in the sequence
+    dimension are typically highly correlated. Linear interpolation provides
+    a reasonable approximation that's much better than:
+    - Returning 0 (introduces systematic bias)
+    - Returning corrupted data (introduces noise)
+
+Performance:
+    Two kernel variants:
+    - Standard: Fixed BLOCK_SIZE from config
+    - Autotuned: Triton autotune selects optimal BLOCK_SIZE based on seq_len
+
+    The autotuned version explores configurations from 512 to 2048 elements
+    per block with varying warp counts.
+
+Error Type Values:
+    From config.ErrorType:
+    - NO_ERROR (0): No error detected, use original value
+    - SINGLE_CORRECTED (1): Single error was corrected, use corrected value
+    - DOUBLE_DETECTED (2): Double error detected, apply interpolation
+
+Usage:
+    from ecc_codecs.triton_kernels import interpolate_double_errors
+
+    # After Hamming84 decode
+    decoded, error_types, stats = hamming84_decode(encoded, return_error_types=True)
+    recovered = interpolate_double_errors(decoded, error_types)
+
+Limitations:
+    - Assumes sequence dimension is contiguous in memory
+    - Interpolation quality degrades with consecutive double errors
+    - Only supports uint8 data (INT4 values stored as uint8)
+
+Verification:
+    verify_triton_vs_cpu() confirms correctness for:
+    - No-error passthrough
+    - Single error in middle of sequence
+    - Boundary conditions (first/last position)
+    - Multiple scattered errors
+    - Large tensors with 10% error rate
+"""
 import torch
 import triton
 import triton.language as tl
@@ -104,6 +160,38 @@ def interpolate_double_errors_kernel(
 
 
 def interpolate_double_errors(q, error_type, original_shape=None, seq_dim=-1):
+    """
+    Replace double-error positions with linear interpolation from neighbors.
+
+    For positions where SECDED detected a double error (uncorrectable), this
+    function replaces the corrupted value with the average of its neighbors.
+
+    Algorithm:
+        for each position i where error_type[i] == DOUBLE_DETECTED:
+            left = q[max(0, i-1)]
+            right = q[min(N-1, i+1)]
+            q[i] = round((left + right) / 2)
+
+    Args:
+        q: Decoded INT4 values (uint8 tensor, values 0-15)
+        error_type: Error classification from ECC decode (uint8 tensor)
+                    0 = no error, 1 = single corrected, 2 = double detected
+        original_shape: Unused, for API compatibility
+        seq_dim: Dimension to treat as sequence (for interpolation neighbors)
+                 Default -1 = last dimension
+
+    Returns:
+        Recovered tensor with same shape as input. Positions with double
+        errors are replaced by interpolated values; others are unchanged.
+
+    Note:
+        If there are no double errors, returns a clone of input without
+        launching the Triton kernel (fast path).
+
+    Boundary Handling:
+        - Position 0: averages (q[0] + q[1]) / 2 (clamps left to 0)
+        - Position N-1: averages (q[N-2] + q[N-1]) / 2 (clamps right to N-1)
+    """
     assert q.is_cuda, "Input must be on CUDA device"
     assert error_type.is_cuda, "Error type must be on CUDA device"
     assert q.shape == error_type.shape, "Shape mismatch between q and error_type"
@@ -113,23 +201,34 @@ def interpolate_double_errors(q, error_type, original_shape=None, seq_dim=-1):
         return q.clone()
 
     input_shape = q.shape
+    inverse_perm = None  # Track if we need to inverse permute
 
     if q.dim() == 1:
         flat_q = q.unsqueeze(0)
         flat_err = error_type.unsqueeze(0)
+        permuted_shape = None
     elif q.dim() == 2:
         flat_q = q
         flat_err = error_type
+        permuted_shape = None
     else:
         if seq_dim < 0:
             seq_dim = q.dim() + seq_dim
 
         if seq_dim != q.dim() - 1:
+            # Permute to move seq_dim to the last position
             perm = list(range(q.dim()))
             perm.remove(seq_dim)
             perm.append(seq_dim)
             q = q.permute(*perm)
             error_type = error_type.permute(*perm)
+            # Compute inverse permutation for restoration
+            inverse_perm = [0] * len(perm)
+            for i, p in enumerate(perm):
+                inverse_perm[p] = i
+            permuted_shape = q.shape
+        else:
+            permuted_shape = None
 
         seq_len = q.shape[-1]
         batch_size = q.numel() // seq_len
@@ -156,7 +255,14 @@ def interpolate_double_errors(q, error_type, original_shape=None, seq_dim=-1):
         DOUBLE_DETECTED=ErrorType.DOUBLE_DETECTED,
     )
 
-    return output.reshape(input_shape)
+    # Restore original shape and dimension order
+    if inverse_perm is not None:
+        # First reshape to permuted shape, then inverse permute
+        output = output.reshape(permuted_shape).permute(*inverse_perm)
+    else:
+        output = output.reshape(input_shape)
+
+    return output
 
 
 def interpolate_double_errors_1d(q, error_type):
@@ -179,23 +285,34 @@ def interpolate_double_errors_autotuned(q, error_type, original_shape=None, seq_
         return q.clone()
 
     input_shape = q.shape
+    inverse_perm = None  # Track if we need to inverse permute
 
     if q.dim() == 1:
         flat_q = q.unsqueeze(0)
         flat_err = error_type.unsqueeze(0)
+        permuted_shape = None
     elif q.dim() == 2:
         flat_q = q
         flat_err = error_type
+        permuted_shape = None
     else:
         if seq_dim < 0:
             seq_dim = q.dim() + seq_dim
 
         if seq_dim != q.dim() - 1:
+            # Permute to move seq_dim to the last position
             perm = list(range(q.dim()))
             perm.remove(seq_dim)
             perm.append(seq_dim)
             q = q.permute(*perm)
             error_type = error_type.permute(*perm)
+            # Compute inverse permutation for restoration
+            inverse_perm = [0] * len(perm)
+            for i, p in enumerate(perm):
+                inverse_perm[p] = i
+            permuted_shape = q.shape
+        else:
+            permuted_shape = None
 
         seq_len = q.shape[-1]
         batch_size = q.numel() // seq_len
@@ -223,7 +340,14 @@ def interpolate_double_errors_autotuned(q, error_type, original_shape=None, seq_
         DOUBLE_DETECTED=ErrorType.DOUBLE_DETECTED,
     )
 
-    return output.reshape(input_shape)
+    # Restore original shape and dimension order
+    if inverse_perm is not None:
+        # First reshape to permuted shape, then inverse permute
+        output = output.reshape(permuted_shape).permute(*inverse_perm)
+    else:
+        output = output.reshape(input_shape)
+
+    return output
 
 
 def verify_triton_vs_cpu():

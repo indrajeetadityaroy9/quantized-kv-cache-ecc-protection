@@ -1,9 +1,9 @@
 from .monte_carlo import (
     run_monte_carlo_experiment,
     format_results_table,
-    format_latex_table,
     save_results,
 )
+from ..latex_tables import format_latex_table
 from .architecture import (
     analyze_architecture,
     run_architecture_comparison,
@@ -25,17 +25,6 @@ from .latency import (
     benchmark_codec,
     run_codec_benchmarks,
     run_latency_experiment,
-)
-from .adaptive_uep import (
-    UEPExperimentConfig,
-    UEPExperimentResult,
-    UEPBoundarySweepResult,
-    UEPComparisonResult,
-    run_single_uep_trial,
-    run_uep_boundary_sweep,
-    run_uep_comparison,
-    generate_uep_report,
-    run_undervolting_stress_test,
 )
 from .fault_tolerance_benchmark import (
     VLLMComparisonConfig,
@@ -78,15 +67,6 @@ __all__ = [
     "benchmark_codec",
     "run_codec_benchmarks",
     "run_latency_experiment",
-    "UEPExperimentConfig",
-    "UEPExperimentResult",
-    "UEPBoundarySweepResult",
-    "UEPComparisonResult",
-    "run_single_uep_trial",
-    "run_uep_boundary_sweep",
-    "run_uep_comparison",
-    "generate_uep_report",
-    "run_undervolting_stress_test",
     "VLLMComparisonConfig",
     "BenchmarkResult",
     "ComparisonReport",

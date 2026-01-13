@@ -132,8 +132,8 @@ class TestStochasticErrorInjection:
 
         # Large tensor for statistical accuracy
         n_elements = 100_000
-        n_bits = 16  # FP16
-        tensor = torch.zeros(n_elements, dtype=torch.int16, device="cuda")
+        n_bits = 8  # Use uint8 (supported by Triton kernel)
+        tensor = torch.zeros(n_elements, dtype=torch.uint8, device="cuda")
 
         corrupted, stats = inject_bit_errors_triton(
             tensor, ber=target_ber, n_bits=n_bits, seed=42, return_stats=True
@@ -168,12 +168,12 @@ class TestFP16ErrorInjection:
         tensor = torch.randn(1000, dtype=torch.float16, device="cuda")
         original = tensor.clone()
 
-        # View as int16 for injection
-        int_view = tensor.flatten().view(torch.int16)
+        # View as uint8 for injection (Triton kernel supports uint8, not int16)
+        byte_view = tensor.flatten().view(torch.uint8)
         corrupted, stats = inject_bit_errors_triton(
-            int_view, ber=0.1, n_bits=16, seed=42, return_stats=True
+            byte_view, ber=0.1, n_bits=8, seed=42, return_stats=True
         )
-        int_view.copy_(corrupted)
+        byte_view.copy_(corrupted)
 
         # Verify that values changed
         changed = (tensor != original).sum().item()
@@ -223,9 +223,10 @@ class TestGPUSynchronization:
         """
         from ecc_codecs.triton_kernels import inject_bit_errors_triton
 
-        tensor = torch.zeros(10000, dtype=torch.int16, device="cuda")
+        # Use uint8 (supported by Triton kernel)
+        tensor = torch.zeros(10000, dtype=torch.uint8, device="cuda")
         corrupted, _ = inject_bit_errors_triton(
-            tensor, ber=0.1, n_bits=16, seed=42, return_stats=True
+            tensor, ber=0.1, n_bits=8, seed=42, return_stats=True
         )
 
         # Synchronize and verify
@@ -250,21 +251,21 @@ class TestErrorInjectionIntegration:
         tensor = torch.randn(2, 8, 128, 64, dtype=torch.float16, device="cuda")
         original = tensor.clone()
 
-        # Flatten and inject
+        # Flatten and view as uint8 for injection (Triton kernel supports uint8)
         flat = tensor.flatten()
-        int_view = flat.view(torch.int16)
+        byte_view = flat.view(torch.uint8)
 
         torch.cuda.synchronize()
         corrupted, stats = inject_bit_errors_triton(
-            int_view, ber=0.01, n_bits=16, seed=42, return_stats=True
+            byte_view, ber=0.01, n_bits=8, seed=42, return_stats=True
         )
-        int_view.copy_(corrupted)
+        byte_view.copy_(corrupted)
         torch.cuda.synchronize()
 
         # Verify injection happened
         assert stats[0] > 0, "Should have injected errors"
 
-        # Calculate effective BER
+        # Calculate effective BER (total bits = numel * 16 for FP16)
         total_bits = tensor.numel() * 16
         effective_ber = stats[0] / total_bits
 
@@ -286,12 +287,13 @@ class TestErrorInjectionIntegration:
             tensor = torch.randn(shape, dtype=torch.float16, device="cuda")
             original_shape = tensor.shape
 
+            # View as uint8 for injection (Triton kernel supports uint8)
             flat = tensor.flatten()
-            int_view = flat.view(torch.int16)
+            byte_view = flat.view(torch.uint8)
             corrupted, _ = inject_bit_errors_triton(
-                int_view, ber=0.01, n_bits=16, seed=42, return_stats=True
+                byte_view, ber=0.01, n_bits=8, seed=42, return_stats=True
             )
-            int_view.copy_(corrupted)
+            byte_view.copy_(corrupted)
 
             # Reshape should still work
             assert tensor.shape == original_shape, f"Shape changed: {original_shape} -> {tensor.shape}"
@@ -311,14 +313,15 @@ class TestLowBEREffectiveness:
         from ecc_codecs.triton_kernels import inject_bit_errors_triton
 
         # Large tensor to ensure statistical significance
+        # Use uint8 (supported by Triton kernel)
         n_elements = 1_000_000
-        tensor = torch.zeros(n_elements, dtype=torch.int16, device="cuda")
+        tensor = torch.zeros(n_elements, dtype=torch.uint8, device="cuda")
 
         corrupted, stats = inject_bit_errors_triton(
-            tensor, ber=ber, n_bits=16, seed=42, return_stats=True
+            tensor, ber=ber, n_bits=8, seed=42, return_stats=True
         )
 
-        total_bits = n_elements * 16
+        total_bits = n_elements * 8
         expected_errors = total_bits * ber
 
         # Should have roughly the expected number of errors (within 50%)

@@ -7,7 +7,6 @@ from .memory_layout import (
 
 from .attention_ecc import (
     paged_attention_ecc,
-    paged_attention_ecc_adaptive,
     reference_attention_ecc,
 )
 
@@ -22,6 +21,7 @@ from .ecc_shim import (
     get_ecc_stats,
     _get_attention_params,
     _find_rotary_embedding,
+    compute_injection_seed,
 )
 
 from .unprotected_shim import (
@@ -40,7 +40,6 @@ __all__ = [
     "get_physical_block",
     "create_block_table",
     "paged_attention_ecc",
-    "paged_attention_ecc_adaptive",
     "reference_attention_ecc",
     "SimpleBlockManager",
     "ECCShimConfig",
@@ -52,6 +51,7 @@ __all__ = [
     "get_ecc_stats",
     "_get_attention_params",
     "_find_rotary_embedding",
+    "compute_injection_seed",
     "UnprotectedShimConfig",
     "UnprotectedDummyCache",
     "UnprotectedBackend",

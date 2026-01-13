@@ -1,0 +1,18 @@
+\begin{table}[h]
+\centering
+\caption{Storage Overhead Comparison}
+\label{tab:storage-overhead}
+\begin{tabular}{lccc}
+\toprule
+Cache Mode & Bits/Value & Overhead vs INT4 & Overhead vs FP16 \\
+\midrule
+FP16 (Oracle) & 16 & +300\% & --- \\
+FP8 (E4M3) & 8 & +100\% & $-50\%$ \\
+INT4 (Unprotected) & 4 & --- & $-75\%$ \\
+Hamming(7,4) & 7 & +75\% & $-56\%$ \\
+Hamming(8,4) & 8 & +100\% & $-50\%$ \\
+H(8,4)+Interp & 8 & +100\% & $-50\%$ \\
+Golay(24,12) & 8 & +100\% & $-50\%$ \\
+\bottomrule
+\end{tabular}
+\end{table}

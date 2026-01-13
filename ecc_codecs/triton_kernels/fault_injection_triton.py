@@ -1,3 +1,51 @@
+"""
+GPU-Accelerated Bernoulli Bit-Flip Fault Injection.
+
+This module implements deterministic bit error injection for simulating
+memory corruption in BER (Bit Error Rate) sweep experiments. Each bit
+position is independently flipped with probability `ber`.
+
+Fault Model:
+    - Bernoulli independent bit flips: P(bit_i flipped) = ber
+    - Applied to individual bits within codewords or raw data
+    - Supports variable codeword widths (4-bit INT4, 7-bit Hamming, 8-bit, 24-bit Golay)
+
+Determinism:
+    The RNG uses seed = base_seed * N + offset * n_bits + bit_idx, ensuring:
+    - Same seed → identical bit flip pattern
+    - Different positions get different random sequences
+    - Different seeds → statistically independent patterns
+
+Performance:
+    Two kernel variants are provided:
+    - Standard: One tl.rand() call per bit (simpler, baseline)
+    - Vectorized: Uses tl.rand4x() for 4 random values per call (2-3x faster)
+
+    For 8-bit data: 2 rand4x calls vs 8 rand calls
+    For 24-bit data: 6 rand4x calls vs 24 rand calls
+
+Supported Data Types:
+    - uint8: For Hamming(7,4), Hamming(8,4), INT4, FP8 codewords
+    - int32: For Golay(24,12) 24-bit codewords
+
+Usage:
+    # Inject errors with 1% BER into Hamming(8,4) codewords
+    corrupted = inject_bit_errors_triton(
+        encoded_data,   # uint8 tensor
+        ber=0.01,       # 1% bit error rate
+        n_bits=8,       # 8 bits per codeword
+        seed=42,        # Deterministic seed
+    )
+
+    # With statistics
+    corrupted, (total_flips, elements_affected) = inject_bit_errors_triton(
+        encoded_data, ber=0.01, n_bits=8, seed=42, return_stats=True
+    )
+
+BER Verification:
+    The verify_triton_fault_injection() function confirms that empirical
+    BER matches target BER within tolerance, validating the RNG quality.
+"""
 import torch
 import triton
 import triton.language as tl
@@ -287,6 +335,37 @@ def fault_inject_int32_kernel(
 
 
 def inject_bit_errors_triton(data, ber, n_bits, seed=0, return_stats=False):
+    """
+    Inject Bernoulli bit-flip errors into codewords at specified BER.
+
+    Each of the lower `n_bits` bits in each element is independently flipped
+    with probability `ber`. Uses GPU-accelerated RNG for high throughput.
+
+    Args:
+        data: Input tensor (uint8 or int32) containing codewords
+        ber: Bit Error Rate in [0, 1]. Probability of flipping each bit.
+        n_bits: Number of bits per codeword to corrupt (e.g., 4, 7, 8, 24)
+        seed: RNG seed for deterministic injection. Same seed = same flips.
+        return_stats: If True, return (corrupted, (total_flips, elements_affected))
+
+    Returns:
+        If return_stats=False: Corrupted tensor with same shape/dtype as input
+        If return_stats=True: Tuple of (corrupted_tensor, (total_bit_flips, num_elements_with_errors))
+
+    Determinism:
+        The RNG is seeded deterministically per-element and per-bit:
+            bit_seed = seed * N * n_bits + offset * n_bits + bit_idx
+        This ensures reproducibility across runs with the same seed.
+
+    Examples:
+        # Hamming(8,4) with 1% BER
+        corrupted = inject_bit_errors_triton(encoded, 0.01, 8, seed=42)
+
+        # Golay(24,12) with statistics
+        corrupted, (flips, affected) = inject_bit_errors_triton(
+            golay_encoded, 0.001, 24, seed=42, return_stats=True
+        )
+    """
     assert data.is_cuda, "Input must be on CUDA device"
 
     if ber <= 0:

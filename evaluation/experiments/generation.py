@@ -17,26 +17,12 @@ class GenerationResult:
 
 
 MODE_CONFIG = {
-    "fp16": {"codec": "fp16", "use_interpolation": False, "sink_blocks": 0},
-    "int4": {"codec": "int4", "use_interpolation": False, "sink_blocks": 0},
-    "int4-hamming": {
-        "codec": "hamming74",
-        "use_interpolation": False,
-        "sink_blocks": 0,
-    },
-    "int4-hamming84": {
-        "codec": "hamming84",
-        "use_interpolation": False,
-        "sink_blocks": 0,
-    },
-    "int4-hamming84-interp": {
-        "codec": "hamming84",
-        "use_interpolation": True,
-        "sink_blocks": 0,
-    },
-    "int12-golay": {"codec": "golay", "use_interpolation": False, "sink_blocks": 0},
-    "adaptive": {"codec": "adaptive", "use_interpolation": False, "sink_blocks": 4},
-    "adaptive-uep": {"codec": "adaptive", "use_interpolation": False, "sink_blocks": 4},
+    "fp16": {"codec": "fp16", "use_interpolation": False},
+    "int4": {"codec": "int4", "use_interpolation": False},
+    "int4-hamming": {"codec": "hamming74", "use_interpolation": False},
+    "int4-hamming84": {"codec": "hamming84", "use_interpolation": False},
+    "int4-hamming84-interp": {"codec": "hamming84", "use_interpolation": True},
+    "int12-golay": {"codec": "golay", "use_interpolation": False},
 }
 
 
@@ -79,7 +65,6 @@ def run_generation_demo(
                 seed=seed,
                 num_blocks=512,
                 block_size=16,
-                sink_blocks=mode_cfg["sink_blocks"],
                 use_interpolation=mode_cfg["use_interpolation"],
             )
 
@@ -162,8 +147,6 @@ def analyze_generation(prompt, generated, cache_mode):
         return "SECDED+INTERP - smoothed errors"
     elif cache_mode == "int12-golay":
         return "ALGEBRAIC RESTORATION"
-    elif cache_mode in ("adaptive", "adaptive-uep"):
-        return "ADAPTIVE UEP - sink+context protection"
 
     return ""
 
@@ -251,5 +234,4 @@ DEFAULT_GENERATION_MODES = [
     "int4-hamming84",
     "int4-hamming84-interp",
     "int12-golay",
-    "adaptive",
 ]

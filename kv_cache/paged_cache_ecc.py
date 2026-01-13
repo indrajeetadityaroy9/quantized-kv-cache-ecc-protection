@@ -1,3 +1,35 @@
+"""
+Block-wise INT4 Quantization and Cache Write Utilities.
+
+This module provides the quantization infrastructure for storing K,V tensors
+in the ECC-protected cache. It handles:
+    - Symmetric INT4 quantization with per-position scale factors
+    - Triton kernels for fused quantize+encode operations
+    - Utility functions for cache write verification
+
+Quantization Scheme:
+    Symmetric INT4 maps floating-point values to signed [-8, +7] range:
+        scale = max(|x|) / 7.0  # Per-position (or per-block)
+        int4_signed = round(x / scale)  # Clamp to [-8, +7]
+        int4_unsigned = int4_signed + 8  # Map to [0, 15] for storage
+
+    The zero-point of 8 ensures the full 4-bit range is used symmetrically.
+
+Dequantization:
+    float_val = (int4_unsigned - 8) * scale
+
+Scale Computation:
+    compute_quantization_scales() computes absmax-based scales with
+    epsilon handling to avoid division by zero. Each position (token, head)
+    gets its own scale factor for maximum precision.
+
+Usage:
+    # Simple path for testing/verification
+    encoded, scales = write_kv_to_cache_simple(kv_tensor, codec="hamming84")
+
+    # Scale computation for use with manual encoding
+    scales = compute_quantization_scales(kv_tensor, dim=-1)
+"""
 import torch
 import triton
 import triton.language as tl
@@ -14,9 +46,26 @@ def quantize_symmetric_int4(
     values,
     scale,
 ):
+    """
+    Quantize float values to unsigned INT4 using symmetric quantization.
+
+    Maps float → signed [-8, +7] → unsigned [0, 15]:
+        quantized = round(values / scale)
+        quantized = clamp(quantized, -8, 7)  # Signed 4-bit range
+        int4_val = quantized + 8  # Shift to unsigned [0, 15]
+
+    Args:
+        values: Float values to quantize
+        scale: Per-element or broadcast scale factor (absmax / 7.0)
+
+    Returns:
+        Unsigned 4-bit values in [0, 15] as uint8
+    """
     quantized = tl.math.round(values / scale)
 
+    # Clamp to signed INT4 range: [-8, +7]
     quantized = tl.maximum(tl.minimum(quantized, 7.0), -8.0)
+    # Shift to unsigned [0, 15] for storage
     int4_val = (quantized + 8.0).to(tl.uint8)
 
     return int4_val
@@ -27,11 +76,42 @@ def dequantize_symmetric_int4(
     int4_val,
     scale,
 ):
+    """
+    Dequantize unsigned INT4 back to float.
+
+    Reverses quantize_symmetric_int4():
+        float_val = (int4_val - 8) * scale
+
+    The zero-point of 8 maps unsigned [0, 15] back to signed [-8, +7].
+    """
     return (int4_val.to(tl.float32) - 8.0) * scale
 
 
 @triton.jit
 def encode_hamming84_inline(int4_val):
+    """
+    Inline Hamming(8,4) SECDED encoder for fused quantize+encode kernels.
+
+    Encodes a 4-bit value into an 8-bit codeword with:
+        - 4 data bits (d0-d3)
+        - 3 parity bits (p0-p2) for single-error correction
+        - 1 overall parity bit for double-error detection
+
+    Codeword layout: [d0, d1, d2, d3, p0, p1, p2, overall_parity]
+
+    Parity equations:
+        p0 = d0 ⊕ d1 ⊕ d3
+        p1 = d0 ⊕ d2 ⊕ d3
+        p2 = d1 ⊕ d2 ⊕ d3
+        overall = XOR of all 7 bits
+
+    Args:
+        int4_val: 4-bit value (0-15) as uint8
+
+    Returns:
+        8-bit Hamming(8,4) codeword as uint8
+    """
+    # Extract 4 data bits
     d0 = (int4_val >> 0) & 1
     d1 = (int4_val >> 1) & 1
     d2 = (int4_val >> 2) & 1
@@ -223,9 +303,33 @@ def compute_quantization_scales(
     tensor,
     dim=-1,
 ):
+    """
+    Compute per-position absmax scales for symmetric INT4 quantization.
+
+    For symmetric INT4 with range [-8, +7], the scale maps the max absolute
+    value to 7 (the positive limit):
+        scale = max(|x|) / 7.0
+
+    This ensures the full dynamic range is used without clipping.
+
+    Args:
+        tensor: Input tensor to compute scales for
+        dim: Dimension to reduce over (default: -1, last dim)
+             Each position along other dims gets its own scale.
+
+    Returns:
+        Scale tensor with shape = input.shape with `dim` removed.
+        Minimum scale is 1.0 to avoid division by zero.
+
+    Example:
+        For input [batch, seq, heads, head_dim] with dim=-1:
+        Returns scales [batch, seq, heads] - one scale per (batch, token, head).
+    """
     abs_max = tensor.abs().max(dim=dim, keepdim=False).values
+    # Scale = absmax / 7 for symmetric INT4 range [-8, +7]
     scales = abs_max / 7.0
 
+    # Clamp to minimum of 1.0 to avoid division by zero
     scales = torch.where(scales == 0, torch.ones_like(scales), scales)
     return scales
 
@@ -235,6 +339,33 @@ def write_kv_to_cache_simple(
     codec="hamming84",
     scale=None,
 ):
+    """
+    Simple quantize+encode path for testing and verification.
+
+    This function provides a non-paged encode path that's useful for:
+        - Unit testing codec implementations
+        - Verifying quantization roundtrip accuracy
+        - Debugging without paged cache complexity
+
+    Pipeline:
+        1. Compute scales if not provided
+        2. Quantize: float → INT4 (symmetric, zero-point=8)
+        3. Encode: INT4 → codewords (Hamming84, Golay, or raw)
+
+    Args:
+        kv: K or V tensor to encode [batch, seq, hidden] or any shape
+        codec: "hamming84", "golay", or None (raw INT4)
+        scale: Optional pre-computed scales. If None, computes per-position scales.
+
+    Returns:
+        Tuple of (encoded_tensor, scales):
+            - encoded: uint8 for Hamming84, int32 for Golay
+            - scales: Per-position scale factors for dequantization
+
+    Note:
+        For production use, prefer ECCBackend.write() which handles
+        paged allocation and proper cache layout.
+    """
     if scale is None:
         scale = compute_quantization_scales(kv, dim=-1)
 

@@ -1,0 +1,14 @@
+\begin{table}[h]
+\centering
+\caption{Perplexity vs BER across protection strategies}
+\begin{tabular}{lccccc}
+\toprule
+BER & FP16 & Hamming(7,4) & Hamming(8,4) & H(8,4)+Interp & Golay(24,12) \\
+\midrule
+0 & $1.42$ & $1.44$ & $1.44$ & $1.44$ & $1.44$ \\
+$1e-04$ & $1.42$ & $1.44$ & $1.44$ & $1.44$ & $1.44$ \\
+$1e-03$ & $1.42$ & $1.44$ & $1.44$ & $1.44$ & $1.44$ \\
+$1e-02$ & $1.42$ & $1.51 \pm 0.05$ & $1.50 \pm 0.02$ & $1.44 \pm 0.02$ & $1.44$ \\
+\bottomrule
+\end{tabular}
+\end{table}

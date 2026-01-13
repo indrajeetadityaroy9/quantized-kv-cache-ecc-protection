@@ -1,3 +1,45 @@
+"""
+Monte Carlo Parameter Sweep Harness for ECC-Protected KV Cache Evaluation.
+
+This module implements the experimental framework for sweeping over (codec, BER, seed)
+configurations with statistical aggregation. It produces publication-ready results
+with confidence intervals for perplexity, KL divergence, top-5 accuracy, and
+catastrophic failure rates.
+
+Experimental Design:
+    - Independent variable: Cache mode (codec), Bit Error Rate (BER)
+    - Random variable: Seed (for Monte Carlo estimation)
+    - Dependent variables: Perplexity, KL divergence, Top-5 accuracy, etc.
+
+Statistical Methodology:
+    - 10 seeds per (codec, BER) for NeurIPS/ICML statistical rigor
+    - Bessel's correction for unbiased sample standard deviation
+    - 95% confidence intervals using Student's t-distribution
+    - t-critical values from lookup table with linear interpolation
+
+Data Structures:
+    - SweepConfig: Configures the sweep (modes, BERs, seeds, metrics to compute)
+    - TrialResult: Single (codec, BER, seed) experiment result
+    - AggregatedResult: Statistics across seeds for one (codec, BER) pair
+    - SweepResults: Full sweep results with trial and aggregated data
+
+Key Functions:
+    - run_sweep(): Execute full (codec × BER × seed) sweep
+    - run_single_trial(): Execute single configuration
+    - AggregatedResult.from_trials(): Compute statistics with 95% CIs
+
+Confidence Interval Computation:
+    CI_95 = t_critical(df) × std / sqrt(n)
+    where df = n - 1, and t_critical comes from Student's t-distribution.
+
+Usage:
+    config = SweepConfig.full()  # Full sweep with 10 seeds
+    results = run_sweep(model, tokenizer, texts, config)
+
+    for mode in results.aggregated:
+        for ber, agg in results.aggregated[mode].items():
+            print(f"{mode} @ BER={ber}: PPL={agg.ppl_mean:.2f} ± {agg.ppl_ci95:.2f}")
+"""
 from dataclasses import dataclass, field
 from typing import List, Dict, Optional, Callable, Any
 import torch
@@ -88,25 +130,52 @@ class TrialResult:
     transfer_overhead_pct: float = 0.0
     is_cpu_bound: bool = True
 
-    # Error correction statistics (Priority 2)
-    injection_count: int = 0  # Total bit flips injected
-    correction_rate: float = 0.0  # corrected / injected
-    detection_rate: float = 0.0  # detected / injected
-    silent_corruption_rate: float = 0.0  # 1 - (corrected + detected) / injected
+    # Error correction statistics
+    injection_count: int = 0  # Number of injection operations (for tracking)
+    correction_rate: float = 0.0  # corrected / (corrected + detected) - fraction recovered
+    detection_rate: float = 0.0  # detected / (corrected + detected) - fraction unrecoverable
+    silent_corruption_rate: float = 0.0  # Not measurable without ground truth
 
     @property
     def computed_correction_rate(self) -> float:
-        """Compute correction rate from raw counts."""
-        if self.injection_count == 0:
+        """Compute correction rate: fraction of errors that were corrected."""
+        total = self.errors_corrected + self.errors_detected
+        if total == 0:
             return 0.0
-        return self.errors_corrected / self.injection_count
+        return self.errors_corrected / total
 
     @property
     def computed_detection_rate(self) -> float:
-        """Compute detection rate from raw counts."""
-        if self.injection_count == 0:
+        """Compute detection rate: fraction of errors that were detected but not corrected."""
+        total = self.errors_corrected + self.errors_detected
+        if total == 0:
             return 0.0
-        return self.errors_detected / self.injection_count
+        return self.errors_detected / total
+
+
+def _t_critical_95(df: int) -> float:
+    """Return t-critical value for 95% CI (two-tailed) given degrees of freedom.
+
+    Uses a lookup table for common values, falls back to approximation for large df.
+    """
+    # t-critical values for 95% CI (two-tailed, alpha=0.05)
+    t_table = {
+        1: 12.706, 2: 4.303, 3: 3.182, 4: 2.776, 5: 2.571,
+        6: 2.447, 7: 2.365, 8: 2.306, 9: 2.262, 10: 2.228,
+        11: 2.201, 12: 2.179, 13: 2.160, 14: 2.145, 15: 2.131,
+        16: 2.120, 17: 2.110, 18: 2.101, 19: 2.093, 20: 2.086,
+        25: 2.060, 30: 2.042, 40: 2.021, 50: 2.009, 100: 1.984,
+    }
+    if df in t_table:
+        return t_table[df]
+    # For df > 100, use normal approximation (z=1.96)
+    if df > 100:
+        return 1.96
+    # Linear interpolation for intermediate values
+    lower = max(k for k in t_table.keys() if k < df)
+    upper = min(k for k in t_table.keys() if k > df)
+    frac = (df - lower) / (upper - lower)
+    return t_table[lower] + frac * (t_table[upper] - t_table[lower])
 
 
 @dataclass
@@ -137,7 +206,9 @@ class AggregatedResult:
     transfer_overhead_pct_std: float = 0.0
     is_cpu_bound: bool = True
 
-    # Error correction statistics (Priority 2)
+    # Error correction statistics
+    # correction_rate = corrected / (corrected + detected) - fraction of errors recovered
+    # detection_rate = detected / (corrected + detected) - fraction of unrecoverable errors
     injection_count_mean: float = 0.0
     correction_rate_mean: float = 0.0
     correction_rate_std: float = 0.0
@@ -145,6 +216,12 @@ class AggregatedResult:
     detection_rate_std: float = 0.0
     silent_corruption_rate_mean: float = 0.0
     silent_corruption_rate_std: float = 0.0
+
+    # 95% Confidence Intervals (half-width: mean ± ci95)
+    ppl_ci95: float = 0.0
+    kl_divergence_ci95: float = 0.0
+    top5_accuracy_ci95: float = 0.0
+    catastrophic_rate_ci95: float = 0.0
 
     @classmethod
     def from_trials(cls, trials: List[TrialResult]) -> "AggregatedResult":
@@ -154,22 +231,37 @@ class AggregatedResult:
         cache_mode = trials[0].cache_mode
         ber = trials[0].ber
 
-        def mean_std(values):
+        n = len(trials)
+        df = n - 1 if n > 1 else 1
+        t_crit = _t_critical_95(df)
+
+        def mean_std_ci(values):
             m = sum(values) / len(values)
-            s = (sum((v - m) ** 2 for v in values) / len(values)) ** 0.5
+            # Bessel's correction: divide by N-1 for unbiased sample std
+            if len(values) > 1:
+                s = (sum((v - m) ** 2 for v in values) / (len(values) - 1)) ** 0.5
+                # 95% CI half-width: t_critical * std / sqrt(n)
+                ci = t_crit * s / (len(values) ** 0.5)
+            else:
+                s = 0.0
+                ci = 0.0
+            return m, s, ci
+
+        def mean_std(values):
+            m, s, _ = mean_std_ci(values)
             return m, s
 
         ppls = [t.perplexity for t in trials]
-        ppl_mean, ppl_std = mean_std(ppls)
+        ppl_mean, ppl_std, ppl_ci95 = mean_std_ci(ppls)
 
         kls = [t.kl_divergence for t in trials]
-        kl_mean, kl_std = mean_std(kls)
+        kl_mean, kl_std, kl_ci95 = mean_std_ci(kls)
 
         top5s = [t.top5_accuracy for t in trials]
-        top5_mean, top5_std = mean_std(top5s)
+        top5_mean, top5_std, top5_ci95 = mean_std_ci(top5s)
 
         cats = [t.catastrophic_rate for t in trials]
-        cat_mean, cat_std = mean_std(cats)
+        cat_mean, cat_std, cat_ci95 = mean_std_ci(cats)
 
         encode_times = [t.encode_time_ms for t in trials]
         encode_mean, encode_std = mean_std(encode_times)
@@ -227,6 +319,11 @@ class AggregatedResult:
             detection_rate_std=detection_rate_std,
             silent_corruption_rate_mean=silent_rate_mean,
             silent_corruption_rate_std=silent_rate_std,
+            # 95% Confidence Intervals
+            ppl_ci95=ppl_ci95,
+            kl_divergence_ci95=kl_ci95,
+            top5_accuracy_ci95=top5_ci95,
+            catastrophic_rate_ci95=cat_ci95,
         )
 
 
@@ -377,30 +474,13 @@ def _run_single_trial_triton(
         raise RuntimeError("Triton backend requires CUDA.")
 
     mode_cfg_map = {
-        "fp16": {"codec": "fp16", "use_interpolation": False, "sink_blocks": 0},
-        "int4": {"codec": "int4", "use_interpolation": False, "sink_blocks": 0},
-        "int4-hamming": {
-            "codec": "hamming74",
-            "use_interpolation": False,
-            "sink_blocks": 0,
-        },
-        "int4-hamming84": {
-            "codec": "hamming84",
-            "use_interpolation": False,
-            "sink_blocks": 0,
-        },
-        "int4-hamming84-interp": {
-            "codec": "hamming84",
-            "use_interpolation": True,
-            "sink_blocks": 0,
-        },
-        "int12-golay": {"codec": "golay", "use_interpolation": False, "sink_blocks": 0},
-        "adaptive": {"codec": "adaptive", "use_interpolation": False, "sink_blocks": 4},
-        "adaptive-uep": {
-            "codec": "adaptive",
-            "use_interpolation": False,
-            "sink_blocks": 4,
-        },
+        "fp16": {"codec": "fp16", "use_interpolation": False},
+        "fp8": {"codec": "fp8", "use_interpolation": False},
+        "int4": {"codec": "int4", "use_interpolation": False},
+        "int4-hamming": {"codec": "hamming74", "use_interpolation": False},
+        "int4-hamming84": {"codec": "hamming84", "use_interpolation": False},
+        "int4-hamming84-interp": {"codec": "hamming84", "use_interpolation": True},
+        "int12-golay": {"codec": "golay", "use_interpolation": False},
     }
     if cache_mode not in mode_cfg_map:
         raise ValueError(f"Unsupported cache_mode for Triton backend: {cache_mode}")
@@ -414,7 +494,6 @@ def _run_single_trial_triton(
         seed=seed,
         num_blocks=2048,
         block_size=16,
-        sink_blocks=mode_cfg["sink_blocks"],
         use_interpolation=mode_cfg["use_interpolation"],
     )
 
@@ -511,10 +590,14 @@ def _run_single_trial_triton(
             injection_count = stats.get("injection_count", 0)
 
     # Compute error correction statistics
-    if injection_count > 0:
-        correction_rate = errors_corrected / injection_count
-        detection_rate = errors_detected / injection_count
-        silent_corruption_rate = max(0.0, 1.0 - correction_rate - detection_rate)
+    # correction_rate = fraction of detected errors that were single-bit and corrected
+    # detection_rate = fraction of detected errors that were double-bit (detected but not corrected)
+    # Note: silent corruption (3+ bit errors) cannot be measured without ground truth
+    total_error_events = errors_corrected + errors_detected
+    if total_error_events > 0:
+        correction_rate = errors_corrected / total_error_events
+        detection_rate = errors_detected / total_error_events
+        silent_corruption_rate = 0.0  # Not measurable without ground truth
     else:
         correction_rate = 0.0
         detection_rate = 0.0

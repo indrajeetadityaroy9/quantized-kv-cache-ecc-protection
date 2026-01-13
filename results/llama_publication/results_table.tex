@@ -1,0 +1,59 @@
+\begin{table}[h]
+\centering
+\caption{Perplexity vs BER across protection strategies}
+\begin{tabular}{lccccc}
+\toprule
+BER & FP16 & Hamming(7,4) & Hamming(8,4) & H(8,4)+Interp & Golay(24,12) \\
+\midrule
+0 & $1.42$ & $1.44$ & $1.44$ & $1.44$ & $1.44$ \\
+$1e-04$ & $1.42$ & $1.44$ & $1.44$ & $1.44$ & $1.44$ \\
+$1e-03$ & $1.42$ & $1.44$ & $1.44$ & $1.44$ & $1.44$ \\
+$1e-02$ & $1.42$ & $1.51 \pm 0.05$ & $1.50 \pm 0.02$ & $1.44 \pm 0.02$ & $1.44$ \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{table}[h]
+\centering
+\caption{KL Divergence (nats) vs BER across protection strategies}
+\begin{tabular}{lccccc}
+\toprule
+BER & FP16 & Hamming(7,4) & Hamming(8,4) & H(8,4)+Interp & Golay(24,12) \\
+\midrule
+0 & $0.0000$ & $0.0127$ & $0.0127$ & $0.0127$ & $0.0127$ \\
+$1e-04$ & $0.0000$ & $0.0131 \pm 0.0004$ & $0.0132 \pm 0.0008$ & $0.0130 \pm 0.0003$ & $0.0127$ \\
+$1e-03$ & $0.0000$ & $0.0139 \pm 0.0016$ & $0.0133 \pm 0.0009$ & $0.0141 \pm 0.0016$ & $0.0127$ \\
+$1e-02$ & $0.0000$ & $0.0726 \pm 0.0020$ & $0.0603 \pm 0.0224$ & $0.0185 \pm 0.0042$ & $0.0140 \pm 0.0007$ \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{table}[h]
+\centering
+\caption{Top-5 Accuracy (\%) vs BER across protection strategies}
+\begin{tabular}{lccccc}
+\toprule
+BER & FP16 & Hamming(7,4) & Hamming(8,4) & H(8,4)+Interp & Golay(24,12) \\
+\midrule
+0 & $98.2$ & $98.2$ & $98.2$ & $98.2$ & $98.2$ \\
+$1e-04$ & $98.2$ & $98.2$ & $98.2$ & $98.2$ & $98.2$ \\
+$1e-03$ & $98.2$ & $98.1 \pm 0.2$ & $98.1 \pm 0.2$ & $98.2$ & $98.2$ \\
+$1e-02$ & $98.2$ & $97.1 \pm 0.2$ & $97.2 \pm 0.5$ & $97.8 \pm 0.2$ & $98.1 \pm 0.2$ \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{table}[h]
+\centering
+\caption{Error Correction Statistics vs BER}
+\begin{tabular}{lccccc}
+\toprule
+BER & FP16 & Hamming(7,4) & Hamming(8,4) & H(8,4)+Interp & Golay(24,12) \\
+\midrule
+0 & - & - & - & - & - \\
+$1e-04$ & - & 57,847 & 58,154 / 46 & 58,154 / 46 & 66,266 \\
+$1e-03$ & - & 577,331 & 575,588 / 2,340 & 575,588 / 2,340 & 665,996 \\
+$1e-02$ & - & 5,606,766 & 5,394,529 / 218,139 & 5,394,529 / 218,139 & 6,642,140 / 2,523 \\
+\bottomrule
+\end{tabular}
+\end{table}

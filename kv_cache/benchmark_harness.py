@@ -13,10 +13,7 @@ from ecc_codecs.triton_kernels import (
     hamming84_encode,
     inject_bit_errors_triton,
 )
-from kv_cache.attention_ecc import (
-    paged_attention_ecc,
-    paged_attention_ecc_adaptive,
-)
+from kv_cache.attention_ecc import paged_attention_ecc
 
 
 @dataclass
@@ -508,95 +505,6 @@ def benchmark_attention_ecc_hamming84(
         tokens_per_sec=tokens_per_sec,
         overhead_vs_baseline=overhead,
         extra={"block_size": block_size, "codec": "hamming84"},
-    )
-
-
-def benchmark_attention_ecc_adaptive(
-    batch_size=4,
-    seq_len=512,
-    num_heads=32,
-    head_dim=128,
-    block_size=16,
-    sink_blocks=4,
-    warmup=10,
-    repeat=100,
-    baseline_latency_us=None,
-):
-    device = "cuda"
-    torch.manual_seed(42)
-
-    num_layers = 1
-    layer_idx = 0
-    num_blocks_per_seq = (seq_len + block_size - 1) // block_size
-    total_blocks = batch_size * num_blocks_per_seq * 2
-
-    block_table = _create_randomized_block_table(
-        batch_size, num_blocks_per_seq, total_blocks, device
-    )
-
-    context_lens = torch.full((batch_size,), seq_len, dtype=torch.int32, device=device)
-
-    k_cache, v_cache, scales = _prepare_ecc_cache_hamming84(
-        batch_size,
-        seq_len,
-        num_heads,
-        head_dim,
-        num_layers,
-        block_size,
-        total_blocks,
-        block_table,
-        device,
-    )
-
-    sink_k_cache, sink_v_cache, sink_scales = _prepare_ecc_cache_golay(
-        batch_size,
-        min(seq_len, sink_blocks * block_size),
-        num_heads,
-        head_dim,
-        num_layers,
-        block_size,
-        total_blocks,
-        block_table,
-        device,
-    )
-
-    query = torch.randn(
-        batch_size, num_heads, head_dim, device=device, dtype=torch.float32
-    )
-
-    def attention_fn():
-        return paged_attention_ecc_adaptive(
-            query,
-            k_cache,
-            v_cache,
-            sink_k_cache,
-            sink_v_cache,
-            block_table,
-            context_lens,
-            scales,
-            sink_scales=sink_scales,
-            layer_idx=layer_idx,
-            block_size=block_size,
-            sink_boundary=sink_blocks,
-        )
-
-    latency_us = cuda_timer(attention_fn, warmup=warmup, repeat=repeat)
-    tokens_per_sec = (batch_size * seq_len) / (latency_us * 1e-6)
-
-    overhead = None
-    if baseline_latency_us is not None and baseline_latency_us > 0:
-        overhead = latency_us / baseline_latency_us
-
-    return AttentionBenchmarkResult(
-        name="paged_attention_ecc_adaptive",
-        batch_size=batch_size,
-        seq_len=seq_len,
-        num_heads=num_heads,
-        head_dim=head_dim,
-        latency_us=latency_us,
-        tokens_per_sec=tokens_per_sec,
-        overhead_vs_baseline=overhead,
-        extra={"block_size": block_size, "sink_blocks": sink_blocks},
     )
 
 

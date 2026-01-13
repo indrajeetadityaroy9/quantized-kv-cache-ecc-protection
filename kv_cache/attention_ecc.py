@@ -1,3 +1,47 @@
+"""
+ECC-Decoded Paged Attention: Triton kernels with inline Hamming/Golay decoding.
+
+This module implements GPU-accelerated paged attention that decodes ECC-protected
+cache entries on-the-fly during the scaled dot-product computation. By fusing ECC
+decode into the attention kernel, we avoid materializing decoded K,V tensors.
+
+Architecture:
+    - decode_hamming84_inline: Inline SECDED decoding (no function call overhead)
+    - decode_golay_inline: Inline Golay(24,12) decoding for 3-error correction
+    - paged_attention_ecc_kernel: Token-by-token attention with online softmax
+    - paged_attention_ecc_tiled_kernel: Experimental tiled variant (slower - see note)
+    - paged_attention_ecc: Python wrapper that dispatches to appropriate kernel
+    - reference_attention_ecc: Python reference implementation for correctness testing
+
+Double-Error Handling:
+    The inline decoder PRESERVES corrupted data on double-error detection rather
+    than zeroing it. This provides a better approximation than zero for attention
+    computation. For applications requiring interpolation on double errors, use
+    the Python path in ecc_shim.py which calls interpolate_double_errors().
+
+Performance Note:
+    The tiled kernel was implemented to reduce softmax rescaling overhead, but
+    benchmarking shows it's SLOWER than the token-by-token kernel. ECC decoding
+    (bit manipulation) dominates compute time, making Flash Attention assumptions
+    inapplicable. Use use_tiled=False (default) for best performance.
+
+Memory Layout:
+    k_cache, v_cache: [num_blocks, num_layers, num_heads, block_size * head_dim]
+    k_scales: [num_blocks, num_layers, num_heads, block_size]
+    block_table: [batch_size, max_blocks] - maps logical to physical blocks
+
+Usage:
+    output = paged_attention_ecc(
+        query,           # [batch, heads, head_dim]
+        k_cache,         # Hamming84-encoded K cache
+        v_cache,         # Hamming84-encoded V cache
+        block_table,     # Physical block mapping
+        context_lens,    # Context length per sequence
+        k_scales,        # Quantization scales
+        layer_idx,
+        block_size,
+    )
+"""
 import torch
 import triton
 import triton.language as tl
@@ -20,6 +64,36 @@ def decode_hamming84_inline(
     lut6: tl.constexpr,
     lut7: tl.constexpr,
 ):
+    """
+    Inline Hamming(8,4) SECDED decode without function call overhead.
+
+    This is a Triton JIT function that performs single-error-correct, double-error-
+    detect decoding directly in the attention kernel. By inlining, we avoid the
+    overhead of calling a separate decode function for each cache element.
+
+    Algorithm:
+        1. Extract 7-bit Hamming codeword and overall parity bit
+        2. Compute 3-bit syndrome from parity checks
+        3. Compute actual parity to detect double errors
+        4. Classify: no_error, single_error (correctable), double_error (detected)
+        5. Correct single errors using syndrome lookup table
+        6. Return lower 4 data bits
+
+    Args:
+        codeword: 8-bit Hamming(8,4) codeword [d0,d1,d2,d3,p0,p1,p2,overall_parity]
+        lut0-lut7: Syndrome lookup table entries (error bit position for each syndrome)
+                   Passed as constexpr to avoid memory loads in inner loop
+
+    Returns:
+        Decoded 4-bit INT4 value (0-15). On double error, returns corrupted data
+        rather than zero to provide better approximation for attention computation.
+
+    Note:
+        The LUT is passed as 8 separate constexpr values because Triton doesn't
+        support dynamic indexing into arrays with tensor indices. The nested
+        tl.where() implements a branchless switch on syndrome value.
+    """
+    # Extract 7-bit Hamming code (bits 0-6) and overall parity (bit 7)
     hamming7 = codeword & 0x7F
     stored_parity = (codeword >> 7) & 1
 
@@ -66,18 +140,37 @@ def decode_hamming84_inline(
     should_correct = is_single_error & (error_pos >= 0)
     correction_mask = tl.where(should_correct, 1 << error_pos, 0)
     corrected = hamming7 ^ correction_mask
-    corrected = tl.where(is_double_error, 0, corrected)
+    # NOTE: On double error (detected but uncorrectable), we PRESERVE the corrupted
+    # data rather than zeroing it. This provides a better approximation for attention
+    # than returning 0. For interpolation-based recovery, use the Python path in
+    # ecc_shim.py which calls interpolate_double_errors() after hamming84_decode().
     decoded = corrected & 0x0F
     return decoded
 
 
 @triton.jit
 def dequantize_int4(int4_val, scale):
+    """
+    Dequantize unsigned INT4 (0-15) back to float using symmetric quantization.
+
+    Maps the stored unsigned value back to signed range then scales:
+        float_val = (int4_val - 8) * scale
+
+    The zero-point of 8 maps unsigned [0,15] to signed [-8,+7].
+
+    Args:
+        int4_val: Unsigned 4-bit value (0-15)
+        scale: Per-position quantization scale factor
+
+    Returns:
+        Dequantized float32 value
+    """
     return (int4_val.to(tl.float32) - 8.0) * scale
 
 
 @triton.jit
 def _popcount_mod2_24bit(x):
+    """Compute popcount(x) mod 2 for 24-bit value using XOR reduction."""
     x = x ^ (x >> 16)
     x = x ^ (x >> 8)
     x = x ^ (x >> 4)
@@ -103,6 +196,29 @@ def decode_golay_inline(
     H10: tl.constexpr,
     H11: tl.constexpr,
 ):
+    """
+    Inline Golay(24,12) decode for 3-error correction.
+
+    Decodes a 24-bit Golay codeword containing 3 packed INT4 values. Golay(24,12)
+    can correct up to 3 arbitrary bit errors, making it suitable for high-BER
+    environments or high-value "sink" tokens in adaptive UEP schemes.
+
+    Algorithm:
+        1. Compute 12-bit syndrome via parity-check matrix multiplication
+        2. Look up error pattern in precomputed 4096-entry syndrome table
+        3. XOR error pattern to correct (if pattern is valid)
+        4. Extract three 4-bit nibbles from corrected 12 data bits
+
+    Args:
+        codeword: 24-bit Golay codeword (12 data + 12 parity)
+        syndrome_lut_ptr: Pointer to precomputed syndrome → error pattern table
+        H0-H11: Rows of parity-check matrix (constexpr for performance)
+
+    Returns:
+        n0, n1, n2: Three decoded 4-bit INT4 values (0-15 each).
+                    Returns 0 for each nibble if error is uncorrectable (≥4 errors).
+    """
+    # Compute 12-bit syndrome via parity checks (H matrix rows as bitmasks)
     s0 = _popcount_mod2_24bit(codeword & H0)
     s1 = _popcount_mod2_24bit(codeword & H1)
     s2 = _popcount_mod2_24bit(codeword & H2)
@@ -176,6 +292,39 @@ def paged_attention_ecc_kernel(
     MAX_CONTEXT_BLOCKS: tl.constexpr,
     KV_BLOCK_SIZE: tl.constexpr,
 ):
+    """
+    Paged attention kernel with fused Hamming(8,4) ECC decoding.
+
+    This kernel computes scaled dot-product attention over an ECC-protected KV cache
+    using online softmax. Each thread block processes one (batch, head) pair, iterating
+    over all context tokens to accumulate the attention-weighted output.
+
+    Algorithm (Online Softmax - Numerically Stable):
+        For each token i in context:
+            1. Load and decode K[i] from Hamming(8,4) codeword
+            2. Compute QK score: score[i] = Q · K[i] * sm_scale
+            3. Update running max: m_new = max(m_old, score[i])
+            4. Rescale accumulator: acc = acc * exp(m_old - m_new)
+            5. Compute attention weight: w[i] = exp(score[i] - m_new)
+            6. Load and decode V[i], accumulate: acc += w[i] * V[i]
+            7. Update normalizer: l = l * exp(m_old - m_new) + w[i]
+        Output = acc / l
+
+    Grid: (batch_size * num_heads,)
+        - Each program handles one (batch, head) pair
+        - Parallelism is across batch and heads, not context tokens
+
+    Memory Layout:
+        k_cache: [num_blocks, num_layers, num_heads, block_size * head_dim]
+                 where each element is a Hamming(8,4) codeword (uint8)
+        k_scales: [num_blocks, num_layers, num_heads, block_size]
+                  per-token quantization scale factors
+
+    Performance Notes:
+        - ECC decode dominates compute; tiled variants don't help
+        - ~20x faster than Python loop with separate decode calls
+        - Bottleneck is bit manipulation, not memory bandwidth
+    """
     pid = tl.program_id(0)
     batch_idx = pid // num_heads
     head_idx = pid % num_heads
@@ -188,7 +337,9 @@ def paged_attention_ecc_kernel(
     q_offset = batch_idx * num_heads * head_dim + head_idx * head_dim
     q = tl.load(query_ptr + q_offset + head_offsets, mask=head_mask, other=0.0)
 
-    m_i = -1e20
+    # Online softmax state: m = running max, l = normalizer sum, acc = weighted sum
+    # Initialize m to -inf equivalent so first real score dominates
+    m_i = -1e20  # -inf approximation; below any valid attention score
     l_i = 0.0
     acc = tl.zeros([BLOCK_HEAD_DIM], dtype=tl.float32)
 
@@ -615,7 +766,7 @@ def paged_attention_ecc(
             v_cache,
             block_table,
             context_lens,
-            scales,
+            k_scales,
             layer_idx,
             block_size,
             head_dim,
@@ -627,42 +778,6 @@ def paged_attention_ecc(
         raise ValueError(f"Unknown codec: {codec}")
 
     return output
-
-
-def paged_attention_ecc_adaptive(
-    query,
-    k_cache,
-    v_cache,
-    sink_k_cache,
-    sink_v_cache,
-    block_table,
-    context_lens,
-    scales,
-    sink_scales=None,
-    layer_idx=0,
-    block_size=16,
-    sink_boundary=4,
-    sm_scale=None,
-):
-    batch_size, num_heads, head_dim = query.shape
-
-    return reference_attention_ecc(
-        query=query,
-        k_cache=k_cache,
-        v_cache=v_cache,
-        block_table=block_table,
-        context_lens=context_lens,
-        scales=scales,
-        layer_idx=layer_idx,
-        block_size=block_size,
-        head_dim=head_dim,
-        sm_scale=sm_scale,
-        codec="hamming84",
-        sink_boundary=sink_boundary,
-        sink_k_cache=sink_k_cache,
-        sink_v_cache=sink_v_cache,
-        sink_scales=sink_scales,
-    )
 
 
 def reference_attention_ecc(
@@ -677,20 +792,12 @@ def reference_attention_ecc(
     head_dim,
     sm_scale=None,
     codec="hamming84",
-    sink_boundary=0,
-    sink_k_cache=None,
-    sink_v_cache=None,
-    sink_scales=None,
 ):
     batch_size, num_heads, _ = query.shape
     device = query.device
 
     if sm_scale is None:
         sm_scale = 1.0 / math.sqrt(head_dim)
-
-    adaptive_uep = (
-        sink_boundary > 0 and sink_k_cache is not None and sink_v_cache is not None
-    )
 
     outputs = []
 
@@ -715,26 +822,15 @@ def reference_attention_ecc(
             end_pos = min(start_pos + block_size, ctx_len)
             tokens_in_block = end_pos - start_pos
 
-            if adaptive_uep and blk_idx < sink_boundary:
-                block_codec = "golay"
-                block_k_cache = sink_k_cache
-                block_v_cache = sink_v_cache
-                block_scales = sink_scales if sink_scales is not None else scales
-            else:
-                block_codec = codec
-                block_k_cache = k_cache
-                block_v_cache = v_cache
-                block_scales = scales
-
             for slot in range(tokens_in_block):
-                if block_codec == "hamming84":
+                if codec == "hamming84":
                     k_offset_start = slot * head_dim
                     k_offset_end = k_offset_start + head_dim
 
-                    k_encoded = block_k_cache[
+                    k_encoded = k_cache[
                         phys_block, layer_idx, :, k_offset_start:k_offset_end
                     ]
-                    v_encoded = block_v_cache[
+                    v_encoded = v_cache[
                         phys_block, layer_idx, :, k_offset_start:k_offset_end
                     ]
 
@@ -743,16 +839,16 @@ def reference_attention_ecc(
                     k_decoded = k_decoded.view(num_heads, head_dim)
                     v_decoded = v_decoded.view(num_heads, head_dim)
 
-                elif block_codec == "golay":
+                elif codec == "golay":
                     codewords_per_slot = (head_dim + 2) // 3
 
                     k_offset_start = slot * codewords_per_slot
                     k_offset_end = k_offset_start + codewords_per_slot
 
-                    k_encoded = block_k_cache[
+                    k_encoded = k_cache[
                         phys_block, layer_idx, :, k_offset_start:k_offset_end
                     ]
-                    v_encoded = block_v_cache[
+                    v_encoded = v_cache[
                         phys_block, layer_idx, :, k_offset_start:k_offset_end
                     ]
 
@@ -773,14 +869,14 @@ def reference_attention_ecc(
                 else:
                     k_offset_start = slot * head_dim
                     k_offset_end = k_offset_start + head_dim
-                    k_decoded = block_k_cache[
+                    k_decoded = k_cache[
                         phys_block, layer_idx, :, k_offset_start:k_offset_end
                     ]
-                    v_decoded = block_v_cache[
+                    v_decoded = v_cache[
                         phys_block, layer_idx, :, k_offset_start:k_offset_end
                     ]
 
-                slot_scale = block_scales[phys_block, layer_idx, :, slot]
+                slot_scale = scales[phys_block, layer_idx, :, slot]
 
                 k_list.append(k_decoded)
                 v_list.append(v_decoded)

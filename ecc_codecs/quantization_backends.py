@@ -1,14 +1,57 @@
 """
-Supported backends:
-- BlockAbsmax: Per-block symmetric absmax quantization (original method)
-- PerToken: Per-token dynamic symmetric quantization
-- PerChannel: Per-channel symmetric quantization
-- KIVI: Asymmetric quantization (per-channel for keys, per-token for values)
-- TorchAO: Integration with PyTorch's torchao library (when available)
+Pluggable Quantization Backends for KV Cache Compression.
+
+This module provides a unified interface for different INT4 quantization strategies,
+enabling apples-to-apples comparison and easy integration with ECC protection.
+
+Backend Comparison:
+
+    | Backend       | Granularity    | Symmetric | Best For           | Overhead |
+    |---------------|----------------|-----------|-----------------------|----------|
+    | block_absmax  | Per-block      | Yes       | General purpose      | Medium   |
+    | per_token     | Per-token      | Yes       | Values (KIVI)        | Low      |
+    | per_channel   | Per-channel    | Yes       | Keys with outliers   | Low      |
+    | kivi          | Mixed          | No        | Full KIVI replication| Medium   |
+    | group_wise    | Per-group      | Yes       | GPTQ-style           | Medium   |
+    | torchao       | Varies         | Varies    | PyTorch native       | Varies   |
+
+Quantization Formulas:
+
+    Symmetric (all except KIVI):
+        scale = max(|x|) / 7.0  # Maps to [-8, +7]
+        q = round(x / scale) + 8  # Zero-point at 8
+        x' = (q - 8) * scale
+
+    Asymmetric (KIVI):
+        scale = (max(x) - min(x)) / 15.0  # Full [0, 15] range
+        zero_point = min(x)
+        q = round((x - zero_point) / scale)
+        x' = q * scale + zero_point
+
+KIVI Rationale (ICML 2024):
+    Key observation: Keys have magnitude outliers in fixed channels across all
+    tokens, while values have more uniform distributions. Therefore:
+    - Keys: Per-channel quantization captures fixed-channel outliers
+    - Values: Per-token quantization captures token-specific magnitudes
+
+    Our KIVISymmetricQuantizer applies this insight with symmetric quantization
+    for ECC compatibility (values centered at 8 for Hamming encoding).
 
 References:
-- KIVI: https://arxiv.org/abs/2402.02750 (ICML 2024)
-- TorchAO: https://github.com/pytorch/ao
+    - KIVI: https://arxiv.org/abs/2402.02750 (ICML 2024)
+    - TorchAO: https://github.com/pytorch/ao
+
+Usage:
+    from ecc_codecs.quantization_backends import get_quantizer, QuantizationMode
+
+    # Basic usage
+    quantizer = get_quantizer("kivi")
+    q_keys = quantizer.quantize(keys, QuantizationMode.KEY)
+    q_values = quantizer.quantize(values, QuantizationMode.VALUE)
+
+    # Or use convenience function
+    from ecc_codecs.quantization_backends import quantize_kv_cache
+    q_keys, q_values = quantize_kv_cache(keys, values, backend="kivi")
 """
 
 from abc import ABC, abstractmethod

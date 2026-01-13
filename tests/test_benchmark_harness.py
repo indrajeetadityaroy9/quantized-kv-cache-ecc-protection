@@ -187,29 +187,6 @@ class TestBenchmarkAttentionECCHamming84:
         assert result.overhead_vs_baseline is None
 
 
-class TestBenchmarkAttentionECCAdaptive:
-    def test_benchmark_attention_ecc_adaptive_returns_result(self):
-        from kv_cache.benchmark_harness import benchmark_attention_ecc_adaptive
-
-        result = benchmark_attention_ecc_adaptive(
-            batch_size=1,
-            seq_len=128,
-            num_heads=4,
-            head_dim=32,
-            block_size=16,
-            sink_blocks=2,
-            warmup=2,
-            repeat=5,
-        )
-
-        assert result.name == "paged_attention_ecc_adaptive"
-        assert result.batch_size == 1
-        assert result.seq_len == 128
-        assert result.latency_us > 0
-        assert result.tokens_per_sec > 0
-        assert result.extra["sink_blocks"] == 2
-
-
 class TestAttentionResultsToJson:
     def test_attention_results_to_json(self):
         import json
@@ -353,12 +330,11 @@ class TestRunAttentionBenchmarkSuite:
             repeat=3,
         )
 
-        assert len(results) == 3
+        assert len(results) == 2
 
         names = [r.name for r in results]
         assert "pytorch_sdpa_baseline" in names
         assert "paged_attention_ecc_hamming84" in names
-        assert "paged_attention_ecc_adaptive" in names
 
         for r in results:
             assert r.latency_us > 0

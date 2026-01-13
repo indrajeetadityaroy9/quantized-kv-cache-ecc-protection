@@ -55,41 +55,16 @@ def run_single_triton_trial(
     from evaluation.metrics import load_wikitext2_test
 
     MODE_CONFIG = {
-        "fp16": {"codec": "fp16", "use_interpolation": False, "sink_blocks": 0},
-        "int4": {"codec": "int4", "use_interpolation": False, "sink_blocks": 0},
-        "int4-hamming": {
-            "codec": "hamming74",
-            "use_interpolation": False,
-            "sink_blocks": 0,
-        },
-        "int4-hamming84": {
-            "codec": "hamming84",
-            "use_interpolation": False,
-            "sink_blocks": 0,
-        },
-        "int4-hamming84-interp": {
-            "codec": "hamming84",
-            "use_interpolation": True,
-            "sink_blocks": 0,
-        },
-        "int12-golay": {"codec": "golay", "use_interpolation": False, "sink_blocks": 0},
-        "adaptive": {"codec": "adaptive", "use_interpolation": False, "sink_blocks": 4},
-        "adaptive-uep": {
-            "codec": "adaptive",
-            "use_interpolation": False,
-            "sink_blocks": 4,
-        },
-        "hamming74": {
-            "codec": "hamming74",
-            "use_interpolation": False,
-            "sink_blocks": 0,
-        },
-        "hamming84": {
-            "codec": "hamming84",
-            "use_interpolation": False,
-            "sink_blocks": 0,
-        },
-        "golay": {"codec": "golay", "use_interpolation": False, "sink_blocks": 0},
+        "fp16": {"codec": "fp16", "use_interpolation": False},
+        "int4": {"codec": "int4", "use_interpolation": False},
+        "int4-hamming": {"codec": "hamming74", "use_interpolation": False},
+        "int4-hamming84": {"codec": "hamming84", "use_interpolation": False},
+        "int4-hamming84-interp": {"codec": "hamming84", "use_interpolation": True},
+        "int12-golay": {"codec": "golay", "use_interpolation": False},
+        # Aliases for convenience
+        "hamming74": {"codec": "hamming74", "use_interpolation": False},
+        "hamming84": {"codec": "hamming84", "use_interpolation": False},
+        "golay": {"codec": "golay", "use_interpolation": False},
     }
 
     if mode not in MODE_CONFIG:
@@ -100,15 +75,10 @@ def run_single_triton_trial(
     mode_cfg = MODE_CONFIG[mode]
     codec = mode_cfg["codec"]
     use_interpolation = mode_cfg["use_interpolation"]
-    sink_blocks = mode_cfg["sink_blocks"]
 
     print("=" * 60)
     print(f"[Trial] mode={mode}, ber={ber:.0e}, seed={seed}")
-    print(
-        f"        codec={codec}, use_interpolation={use_interpolation}, sink_blocks={sink_blocks}"
-    )
-    if mode in ["adaptive", "adaptive-uep"]:
-        print("        NOTE: adaptive mode uses Golay for sink blocks")
+    print(f"        codec={codec}, use_interpolation={use_interpolation}")
     print("=" * 60)
 
     model, tokenizer = load_llama_model(model_name)
@@ -124,7 +94,6 @@ def run_single_triton_trial(
         seed=seed,
         num_blocks=2048,
         block_size=16,
-        sink_blocks=sink_blocks,
         use_interpolation=use_interpolation,
     )
 

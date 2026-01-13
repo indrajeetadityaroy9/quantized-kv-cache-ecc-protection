@@ -620,3 +620,249 @@ class TestGetECCStats:
         assert "sequences" in stats
         assert stats["allocated_blocks"] == 3
         assert stats["free_blocks"] == 29
+
+
+class TestInterpolationDimension:
+    """Tests verifying interpolation uses correct dimension (temporal, not features)."""
+
+    def test_interpolation_uses_temporal_neighbors(self):
+        """Verify interpolation is along context length (seq_dim=0), not head dimension.
+
+        This test validates the fix for the interpolation dimension bug where
+        the original code interpolated along the wrong dimension.
+        """
+        from ecc_codecs.triton_kernels import interpolate_double_errors
+        from ecc_codecs.triton_kernels.config import ErrorType
+
+        ctx_len, heads, dim = 10, 4, 64
+
+        # Create tensor where each token position has a unique value
+        # k[i, :, :] = i for all heads and features
+        k = torch.arange(ctx_len, dtype=torch.float32, device="cuda")
+        k = k.view(ctx_len, 1, 1).expand(ctx_len, heads, dim).contiguous()
+        k = k.to(torch.uint8)
+
+        # Mark position 5 as double error (DOUBLE_DETECTED = 2)
+        error_types = torch.zeros(ctx_len, heads, dim, dtype=torch.uint8, device="cuda")
+        error_types[5, :, :] = ErrorType.DOUBLE_DETECTED
+
+        # Interpolate along temporal dimension (seq_dim=0)
+        result = interpolate_double_errors(k, error_types, seq_dim=0)
+
+        # Position 5 should be average of positions 4 and 6 = (4 + 6) / 2 = 5
+        # After rounding to uint8
+        expected_value = 5
+        actual_values = result[5]
+
+        assert torch.all(actual_values == expected_value), (
+            f"Interpolation should use temporal neighbors. "
+            f"Expected all values at position 5 to be {expected_value}, "
+            f"but got {actual_values.unique().tolist()}"
+        )
+
+    def test_interpolation_boundary_first_position(self):
+        """Verify interpolation handles first position correctly."""
+        from ecc_codecs.triton_kernels import interpolate_double_errors
+        from ecc_codecs.triton_kernels.config import ErrorType
+
+        ctx_len, heads, dim = 10, 2, 32
+        k = torch.arange(ctx_len, dtype=torch.float32, device="cuda")
+        k = k.view(ctx_len, 1, 1).expand(ctx_len, heads, dim).contiguous()
+        k = k.to(torch.uint8)
+
+        # Mark first position as double error
+        error_types = torch.zeros(ctx_len, heads, dim, dtype=torch.uint8, device="cuda")
+        error_types[0, :, :] = ErrorType.DOUBLE_DETECTED
+
+        result = interpolate_double_errors(k, error_types, seq_dim=0)
+
+        # First position uses clamped left neighbor (0) and right neighbor (1)
+        # Average = (0 + 1) / 2 = 0.5 → rounds to 1 with +0.5 rounding
+        expected_value = 1
+        actual_values = result[0]
+
+        assert torch.all(actual_values == expected_value), (
+            f"First position interpolation failed. Expected {expected_value}, "
+            f"got {actual_values.unique().tolist()}"
+        )
+
+    def test_interpolation_boundary_last_position(self):
+        """Verify interpolation handles last position correctly."""
+        from ecc_codecs.triton_kernels import interpolate_double_errors
+        from ecc_codecs.triton_kernels.config import ErrorType
+
+        ctx_len, heads, dim = 10, 2, 32
+        k = torch.arange(ctx_len, dtype=torch.float32, device="cuda")
+        k = k.view(ctx_len, 1, 1).expand(ctx_len, heads, dim).contiguous()
+        k = k.to(torch.uint8)
+
+        # Mark last position as double error
+        error_types = torch.zeros(ctx_len, heads, dim, dtype=torch.uint8, device="cuda")
+        error_types[-1, :, :] = ErrorType.DOUBLE_DETECTED
+
+        result = interpolate_double_errors(k, error_types, seq_dim=0)
+
+        # Last position uses left neighbor (8) and clamped right neighbor (9)
+        # Average = (8 + 9) / 2 = 8.5 → rounds to 9 with +0.5 rounding
+        expected_value = 9
+        actual_values = result[-1]
+
+        assert torch.all(actual_values == expected_value), (
+            f"Last position interpolation failed. Expected {expected_value}, "
+            f"got {actual_values.unique().tolist()}"
+        )
+
+    def test_interpolation_preserves_non_error_values(self):
+        """Verify interpolation doesn't modify non-error positions."""
+        from ecc_codecs.triton_kernels import interpolate_double_errors
+        from ecc_codecs.triton_kernels.config import ErrorType
+
+        ctx_len, heads, dim = 10, 4, 64
+        k = torch.randint(0, 16, (ctx_len, heads, dim), dtype=torch.uint8, device="cuda")
+        original = k.clone()
+
+        # Mark position 5 as double error
+        error_types = torch.zeros(ctx_len, heads, dim, dtype=torch.uint8, device="cuda")
+        error_types[5, :, :] = ErrorType.DOUBLE_DETECTED
+
+        result = interpolate_double_errors(k, error_types, seq_dim=0)
+
+        # Non-error positions should be unchanged
+        non_error_mask = error_types != ErrorType.DOUBLE_DETECTED
+        assert torch.all(result[non_error_mask] == original[non_error_mask]), (
+            "Non-error positions should be unchanged by interpolation"
+        )
+
+
+class TestECCBackendStatsReset:
+    """Tests for ECCBackend statistics reset functionality.
+
+    These tests verify that the P0 CRITICAL fix for stats leaking across texts
+    works correctly. Previously, reset_ecc_cache() only reset the block manager,
+    not the backend's error statistics, causing contaminated results.
+    """
+
+    @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA required")
+    def test_stats_reset_clears_all_counters(self):
+        """Verify reset_stats() clears all ECCBackend counters."""
+        from kv_cache.ecc_shim import (
+            ECCShimConfig,
+            SimpleBlockManager,
+            ECCBackend,
+        )
+
+        manager = SimpleBlockManager(
+            num_blocks=32,
+            block_size=16,
+            num_layers=2,
+            num_kv_heads=4,
+            head_dim=64,
+            device="cuda",
+            codec="hamming84",
+        )
+        config = ECCShimConfig(codec="hamming84", ber=0.01, inject_errors=True)
+        backend = ECCBackend(manager, config, num_heads=4)
+
+        # Simulate accumulated statistics
+        backend._injection_count = 500
+        backend._errors_corrected = 100
+        backend._errors_detected = 10
+        backend._total_values = 10000
+
+        # Reset
+        backend.reset_stats()
+
+        # Verify ALL stats are zero
+        assert backend._injection_count == 0, "injection_count should be reset"
+        assert backend._errors_corrected == 0, "errors_corrected should be reset"
+        assert backend._errors_detected == 0, "errors_detected should be reset"
+        assert backend._total_values == 0, "total_values should be reset"
+
+    @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA required")
+    def test_reset_ecc_cache_resets_backend_stats(self):
+        """Verify reset_ecc_cache() resets backend stats via model attribute."""
+        from kv_cache.ecc_shim import (
+            ECCShimConfig,
+            SimpleBlockManager,
+            ECCBackend,
+            reset_ecc_cache,
+            get_ecc_stats,
+        )
+
+        # Create mock model with backend attached
+        class MockModel:
+            pass
+
+        model = MockModel()
+        manager = SimpleBlockManager(
+            num_blocks=32,
+            block_size=16,
+            num_layers=2,
+            num_kv_heads=4,
+            head_dim=64,
+            device="cuda",
+            codec="hamming84",
+        )
+        config = ECCShimConfig(codec="hamming84", ber=0.01, inject_errors=True)
+        backend = ECCBackend(manager, config, num_heads=4)
+
+        model._ecc_block_manager = manager
+        model._ecc_backend = backend
+
+        # Simulate accumulated statistics
+        backend._injection_count = 500
+        backend._errors_corrected = 100
+        backend._errors_detected = 10
+        backend._total_values = 10000
+
+        # Reset via reset_ecc_cache
+        reset_ecc_cache(model)
+
+        # Verify stats are reset
+        stats = get_ecc_stats(model)
+        assert stats["injection_count"] == 0, "injection_count should be reset"
+        assert stats["errors_corrected"] == 0, "errors_corrected should be reset"
+        assert stats["errors_detected"] == 0, "errors_detected should be reset"
+        assert stats["total_values"] == 0, "total_values should be reset"
+
+    @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA required")
+    def test_total_values_tracked_on_write(self):
+        """Verify total_values is incremented when writing K,V."""
+        from kv_cache.ecc_shim import (
+            ECCShimConfig,
+            SimpleBlockManager,
+            ECCBackend,
+        )
+
+        manager = SimpleBlockManager(
+            num_blocks=32,
+            block_size=16,
+            num_layers=1,
+            num_kv_heads=4,
+            head_dim=64,
+            device="cuda",
+            codec="hamming84",
+        )
+        config = ECCShimConfig(codec="hamming84", ber=0.0)
+        backend = ECCBackend(manager, config, num_heads=4)
+
+        # Write some K,V
+        batch_size = 1
+        seq_len = 10
+        num_kv_heads = 4
+        head_dim = 64
+
+        k = torch.randn(batch_size, seq_len, num_kv_heads * head_dim, device="cuda", dtype=torch.float16)
+        v = torch.randn(batch_size, seq_len, num_kv_heads * head_dim, device="cuda", dtype=torch.float16)
+
+        # Before write, total_values should be 0
+        assert backend._total_values == 0
+
+        backend.write(k, v, layer_idx=0, seq_id=0)
+
+        # After write, total_values should be:
+        # 2 (K and V) * batch_size * seq_len * num_kv_heads * head_dim
+        expected = 2 * batch_size * seq_len * num_kv_heads * head_dim
+        assert backend._total_values == expected, (
+            f"Expected total_values={expected}, got {backend._total_values}"
+        )
